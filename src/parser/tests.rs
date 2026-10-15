@@ -240,7 +240,7 @@ fn generated(seed: &mut u64, depth: usize) -> Script {
                 target: w(b"file"),
             }));
         }
-        Command::Simple(SimpleCommand { parts })
+        Command::Simple(SimpleCommand { parts, line: 1 })
     }
     fn pipe(seed: &mut u64, depth: usize) -> Pipeline {
         let count = 1 + next(seed, 2);

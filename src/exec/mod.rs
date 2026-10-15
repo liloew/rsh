@@ -1,7 +1,9 @@
 //! AST execution with expansion, redirections, control flow and functions.
+mod builtins;
 mod control;
 use crate::ast::*;
-use crate::builtins::{self, Builtin, Outcome};
+use crate::builtins as builtin_impl;
+use crate::builtins::{Builtin, Outcome};
 use crate::env::ShellEnv;
 use crate::sys::{self, Child, PreparedProcess, SpawnOptions};
 use std::os::fd::AsRawFd;
@@ -46,6 +48,10 @@ pub struct Shell {
     fd_floor: i32,
     loop_depth: usize,
     eval_depth: usize,
+    pub(super) ignored_errexit: usize,
+    command_depth: usize,
+    completed: std::collections::BTreeMap<i32, u8>,
+    active_assignments: Vec<(Vec<u8>, Vec<u8>)>,
     pub background_signals: bool,
 }
 struct Simple {
@@ -57,6 +63,7 @@ struct Simple {
 }
 impl Shell {
     pub fn new(env: ShellEnv, executable: PathBuf) -> Self {
+        let ignored_errexit = usize::from(env.errexit_ignored);
         Self {
             env,
             executable,
@@ -64,11 +71,16 @@ impl Shell {
             fd_floor: 20,
             loop_depth: 0,
             eval_depth: 0,
+            ignored_errexit,
+            command_depth: 0,
+            completed: std::collections::BTreeMap::new(),
+            active_assignments: Vec::new(),
             background_signals: false,
         }
     }
     pub fn run(&mut self, script: &Script) -> u8 {
-        self.eval_script(script).status()
+        let flow = self.eval_script(script);
+        self.finish(flow)
     }
     fn eval_script(&mut self, script: &Script) -> Flow {
         if self.eval_depth >= 128 {
@@ -82,6 +94,13 @@ impl Shell {
             .max(crate::redirect::source_floor(script, &self.env));
         let mut flow = Flow::Status(self.env.last_status);
         for item in &script.0 {
+            if self.env.options.noexec && !self.env.options.interactive {
+                break;
+            }
+            if let Some(signal) = self.signals_between_commands() {
+                flow = signal;
+                break;
+            }
             self.reap_background();
             flow = if item.separator == Separator::Background {
                 let result = self.launch_background(&item.and_or).map(Flow::Status);
@@ -123,17 +142,42 @@ impl Shell {
         }
     }
     fn and_or(&mut self, list: &AndOr) -> Flow {
-        let result = self.pipeline(&list.first);
-        let mut flow = self.report(result);
-        self.env.last_status = flow.status();
-        for (op, pipe) in &list.rest {
+        let mut flow = Flow::Status(0);
+        for (i, pipe) in std::iter::once(&list.first)
+            .chain(list.rest.iter().map(|(_, p)| p))
+            .enumerate()
+        {
+            if i > 0
+                && let Some((op, _)) = list.rest.get(i - 1)
+                && (matches!(op, AndOrOp::And) != (self.env.last_status == 0))
+            {
+                continue;
+            }
+            let exempt = i < list.rest.len() || pipe.negated;
+            if exempt {
+                self.ignored_errexit += 1;
+            }
+            let result = self.pipeline(pipe);
+            flow = self.report(result);
+            self.env.last_status = flow.status();
+            if exempt {
+                self.ignored_errexit -= 1;
+            }
             if !matches!(flow, Flow::Status(_)) {
                 break;
             }
-            if matches!(op, AndOrOp::And) == (self.env.last_status == 0) {
-                let result = self.pipeline(pipe);
-                flow = self.report(result);
-                self.env.last_status = flow.status();
+            if !exempt
+                && self.ignored_errexit == 0
+                && self.env.options.errexit
+                && flow.status() != 0
+            {
+                self.env.exit_requested = Some(flow.status());
+                flow = Flow::Exit(flow.status());
+                break;
+            }
+            if let Some(signal) = self.signals_between_commands() {
+                flow = signal;
+                break;
             }
         }
         flow
@@ -142,6 +186,8 @@ impl Shell {
         let Command::Simple(simple) = command else {
             return Err(ExecError::Unsupported("expected a simple command"));
         };
+        self.env
+            .set(b"LINENO".to_vec(), simple.line.to_string().into_bytes());
         let mut words = Vec::new();
         let mut assignments = Vec::new();
 
@@ -149,7 +195,19 @@ impl Shell {
         for part in &simple.parts {
             match part {
                 SimplePart::Word(word) => {
-                    words.extend(self.expand(word, crate::expand::Mode::Argument)?)
+                    let declaration = words
+                        .first()
+                        .is_some_and(|w: &Vec<u8>| w == b"export" || w == b"readonly");
+                    let assignment = matches!(word.0.first(),Some(WordPart::Literal(v)) if v.iter().position(|b|*b==b'=').is_some_and(|i|crate::env::valid_name(v.get(..i).unwrap_or_default())));
+                    if declaration && assignment {
+                        if let Some(a) = crate::parser::assignment(word) {
+                            let value =
+                                self.expand_scalar(&a.value, crate::expand::Mode::Assignment)?;
+                            words.push([a.name.as_slice(), b"=", value.as_slice()].concat());
+                        }
+                    } else {
+                        words.extend(self.expand(word, crate::expand::Mode::Argument)?);
+                    }
                 }
                 SimplePart::Assignment(_) => {}
                 SimplePart::Redirection(redirection) => {
@@ -161,6 +219,14 @@ impl Shell {
         let result = (|| -> Result<(), ExecError> {
             for part in &simple.parts {
                 if let SimplePart::Assignment(a) = part {
+                    if self.env.is_readonly(&a.name) {
+                        self.env.exit_requested = Some(1);
+                        return Err(crate::expand::ExpandError::new(format!(
+                            "{}: readonly variable",
+                            String::from_utf8_lossy(&a.name)
+                        ))
+                        .into());
+                    }
                     let value = self.expand_scalar(&a.value, crate::expand::Mode::Assignment)?;
                     saved.push((a.name.clone(), self.env.variables.get(&a.name).cloned()));
                     self.env.set(a.name.clone(), value.clone());
@@ -178,12 +244,29 @@ impl Shell {
         }
         result?;
         let name = words.first().map(Vec::as_slice).unwrap_or_default();
-        let special = builtins::special(name);
+        if self.env.options.xtrace {
+            let ps4 = self.env.get(b"PS4").unwrap_or(b"+ ").to_vec();
+            let parts = crate::lexer::here_parts(&ps4, 0)
+                .map_err(|e| crate::expand::ExpandError::new(e.to_string()))?;
+            self.env.options.xtrace = false;
+            let prefix = self.expand_scalar(&Word(parts), crate::expand::Mode::HereDoc);
+            self.env.options.xtrace = true;
+            let mut trace = prefix?;
+            let mut items = assignments
+                .iter()
+                .map(|(k, v)| [k.as_slice(), b"=", v.as_slice()].concat())
+                .collect::<Vec<_>>();
+            items.extend(words.clone());
+            trace.extend(items.join(b" ".as_slice()));
+            trace.push(b'\n');
+            let _ = sys::write_fd(2, &trace);
+        }
+        let special = builtin_impl::special(name);
         let builtin = special.or_else(|| {
             if self.env.functions.contains_key(name) {
                 None
             } else {
-                builtins::regular(name)
+                builtin_impl::regular(name)
             }
         });
         Ok(Simple {
@@ -202,20 +285,34 @@ impl Shell {
             .collect();
         for (name, value) in &simple.assignments {
             self.env.set(name.clone(), value.clone());
+            if !simple.special && !simple.words.is_empty() {
+                self.env.mark_exported(name.clone());
+            }
         }
+        self.active_assignments = simple.assignments.clone();
         let outcome = if let Some(builtin) = simple.builtin {
             if matches!(
                 builtin,
+                Builtin::Dot
+                    | Builtin::Eval
+                    | Builtin::Exec
+                    | Builtin::Type
+                    | Builtin::Command
+                    | Builtin::Wait
+            ) {
+                self.context_builtin(builtin, simple.words.get(1..).unwrap_or_default())
+            } else if matches!(
+                builtin,
                 Builtin::Break | Builtin::Continue | Builtin::Return
             ) {
-                builtins::control(
+                builtin_impl::control(
                     builtin,
                     simple.words.get(1..).unwrap_or_default(),
                     &mut self.env,
                     self.loop_depth,
                 )
             } else {
-                builtins::run(
+                builtin_impl::run(
                     builtin,
                     simple.words.get(1..).unwrap_or_default(),
                     &mut self.env,
@@ -248,7 +345,7 @@ impl Shell {
         }
         if simple.words.is_empty() || simple.builtin.is_some() {
             let outcome = if let Some(builtin) = simple.builtin {
-                builtins::run(
+                builtin_impl::run(
                     builtin,
                     simple.words.get(1..).unwrap_or_default(),
                     &mut local,
@@ -363,6 +460,10 @@ impl Shell {
             });
         }
         let outcome = self.parent_builtin(simple);
+        if simple.special && outcome.status != 0 && !outcome.stderr.is_empty() {
+            self.env.exit_requested = Some(outcome.status);
+        }
+
         let output =
             sys::write_fd(1, &outcome.stdout).and_then(|()| sys::write_fd(2, &outcome.stderr));
         if matches!(simple.builtin, Some(Builtin::Exec)) && simple.words.len() == 1 {
@@ -387,10 +488,16 @@ impl Shell {
             },
         )?;
         let mut last = 0;
+        let mut failure = 0;
         let mut error = None;
         for child in children {
             match child.wait() {
-                Ok(status) => last = status,
+                Ok(status) => {
+                    last = status;
+                    if status != 0 {
+                        failure = status;
+                    }
+                }
                 Err(e) => {
                     error.get_or_insert(e);
                 }
@@ -399,7 +506,11 @@ impl Shell {
         if let Some(error) = error {
             return Err(error.into());
         }
-        Ok(last)
+        Ok(if self.env.options.pipefail {
+            failure
+        } else {
+            last
+        })
     }
     fn prepare_command(
         &mut self,
@@ -510,8 +621,42 @@ impl Shell {
                     rest: Vec::new(),
                 },
             }]);
-            words.push([b"f=".as_slice(), &script.to_source_bytes()].concat());
+            let data = crate::env::encode_snapshot(&[
+                crate::parser::locations::lines(&script),
+                script.to_source_bytes(),
+            ]);
+            words.push([b"f=".as_slice(), data.as_slice()].concat());
         }
+        for name in crate::env::options::NAMES {
+            words.push(
+                format!(
+                    "O={name}={}",
+                    u8::from(self.env.option(name).unwrap_or(false))
+                )
+                .into_bytes(),
+            );
+        }
+        words.push(format!("E={}", u8::from(self.ignored_errexit > 0)).into_bytes());
+        words.push(format!("s={}", self.env.source_depth).into_bytes());
+        for (n, v) in &self.env.variables {
+            if v.readonly {
+                words.push([b"r=".as_slice(), n].concat());
+            }
+        }
+        for (n, v) in &self.env.aliases {
+            words.push([b"A=".as_slice(), n, b"=", v].concat());
+        }
+        let trap_only = script.0.len() == 1
+            && matches!(script.0.first().and_then(|i|i.and_or.first.commands.first()),Some(Command::Simple(s)) if matches!(s.parts.as_slice(),[SimplePart::Word(Word(p))] if matches!(p.as_slice(),[WordPart::Literal(n)] if n==b"trap")));
+        for (n, v) in &self.env.traps {
+            if v.is_empty() || trap_only {
+                words.push([format!("t={n}=").as_bytes(), v].concat());
+            }
+        }
+        if trap_only {
+            words.push(b"T=1".to_vec());
+        }
+        words.push([b"L=".as_slice(), &crate::parser::locations::lines(script)].concat());
         words.push(script.to_source_bytes());
         let payload = crate::env::encode_snapshot(&words);
         let source = sys::here_input(
@@ -558,8 +703,8 @@ impl Shell {
             },
             mode,
         );
-        if result.is_err() {
-            self.env.exit_requested = Some(2);
+        if let Err(error) = &result {
+            self.env.exit_requested = Some(error.status);
         }
         Ok(result?)
     }
@@ -616,8 +761,17 @@ impl Shell {
         Ok((out, status))
     }
     pub fn reap_background(&mut self) {
-        self.background
-            .retain(|child| matches!(child.try_wait(), Ok(None)));
+        let mut active = Vec::new();
+        for child in self.background.drain(..) {
+            match child.try_wait() {
+                Ok(Some(status)) => {
+                    self.completed.insert(child.pid(), status);
+                }
+                Ok(None) => active.push(child),
+                Err(_) => {}
+            }
+        }
+        self.background = active;
     }
     pub fn background_count(&self) -> usize {
         self.background.len()

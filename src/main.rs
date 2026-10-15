@@ -14,21 +14,73 @@ fn main() -> ExitCode {
     }
 }
 fn run() -> std::io::Result<u8> {
-    let mut args = std::env::args_os().skip(1);
-    let first = args.next();
-    if first.as_deref() == Some(OsStr::new("--m3-worker")) {
-        return worker(args.collect(), true);
+    rsh::sys::capture_inherited_ignored();
+    let mut args = std::env::args_os().skip(1).peekable();
+    if args
+        .peek()
+        .is_some_and(|s| s == "--m3-worker" || s == "--subshell-worker")
+    {
+        let kind = args.next();
+        return worker(
+            args.collect(),
+            kind.as_deref() == Some(OsStr::new("--m3-worker")),
+        );
     }
-    if first.as_deref() == Some(OsStr::new("--subshell-worker")) {
-        return worker(args.collect(), false);
-    }
-    let dump = first.as_deref() == Some(OsStr::new("--dump-ast"));
-    let first = if dump { args.next() } else { first };
-    let mut source = Vec::new();
     let mut env = ShellEnv::inherited()?;
-    if let Some(arg0) = std::env::args_os().next() {
-        env.arg0 = arg0.as_bytes().to_vec();
+    if let Some(a) = std::env::args_os().next() {
+        env.arg0 = a.as_bytes().to_vec();
     }
+    let mut dump = false;
+    let mut mode = None;
+    let mut end_options = false;
+    while let Some(arg) = args.peek() {
+        let b = arg.as_bytes();
+        if b == b"--dump-ast" {
+            dump = true;
+            args.next();
+            continue;
+        }
+        if b == b"--" {
+            end_options = true;
+            args.next();
+            break;
+        }
+        if !b.starts_with(b"-") || b == b"-" {
+            break;
+        }
+        let arg = args.next().unwrap_or_default();
+        let bytes = arg.as_bytes();
+        for &flag in bytes.get(1..).unwrap_or_default() {
+            match flag {
+                b'c' | b's' => mode = Some(flag),
+                b'o' => {
+                    let Some(n) = args.next() else {
+                        return Ok(usage());
+                    };
+                    let Some(n) = n.to_str() else {
+                        return Ok(usage());
+                    };
+                    if !env.set_option(n, true) {
+                        return Ok(usage());
+                    }
+                }
+                c => {
+                    if !env.set_flag(c, true) {
+                        return Ok(usage());
+                    }
+                }
+            }
+        }
+        if mode == Some(b'c') {
+            break;
+        }
+    }
+    let first = match mode {
+        Some(b'c') => Some(OsString::from("-c")),
+        Some(b's') => Some(OsString::from("-s")),
+        _ => args.next(),
+    };
+    let mut source = Vec::new();
     match first.as_deref() {
         Some(option) if option == "-c" => {
             let Some(command) = args.next() else {
@@ -42,22 +94,37 @@ fn run() -> std::io::Result<u8> {
         }
         option if option.is_none() || option == Some(OsStr::new("-s")) => {
             env.positional = args.map(|a| a.as_bytes().to_vec()).collect();
+            if !dump && !env.options.noexec {
+                let mut shell = Shell::new(env, std::env::current_exe()?);
+                return Ok(shell.run_stdin());
+            }
             std::io::stdin().read_to_end(&mut source)?;
         }
-        Some(path) if !path.as_bytes().starts_with(b"-") => {
+        Some(path) if end_options || !path.as_bytes().starts_with(b"-") => {
             env.arg0 = path.as_bytes().to_vec();
             env.positional = args.map(|a| a.as_bytes().to_vec()).collect();
             source = std::fs::read(path)?;
         }
         _ => return Ok(usage()),
     }
-    evaluate(&source, dump, env, false)
+    evaluate(&source, dump, env, false, false)
 }
 fn usage() -> u8 {
     eprintln!("rsh: arguments: usage: rsh [--dump-ast] [-c command | -s | script]");
     2
 }
-fn evaluate(source: &[u8], dump: bool, env: ShellEnv, background: bool) -> std::io::Result<u8> {
+fn evaluate(
+    source: &[u8],
+    dump: bool,
+    env: ShellEnv,
+    background: bool,
+    worker: bool,
+) -> std::io::Result<u8> {
+    if !dump && !worker {
+        let mut shell = Shell::new(env, std::env::current_exe()?);
+        shell.background_signals = background;
+        return Ok(shell.run_source(source));
+    }
     let script = match parser::parse(source) {
         Ok(script) => script,
         Err(error) => {
@@ -97,8 +164,67 @@ fn worker(args: Vec<OsString>, background: bool) -> std::io::Result<u8> {
     env.variables.clear();
     env.last_status = status;
     let mut closed = 0;
+    let mut lines = Vec::new();
     for arg in snapshot.iter().map(|v| OsStr::from_bytes(v)) {
         let bytes = arg.as_bytes();
+        if let Some(v) = bytes.strip_prefix(b"L=") {
+            lines = v.to_vec();
+            continue;
+        }
+
+        if let Some(v) = bytes.strip_prefix(b"O=") {
+            if let Some(i) = v.iter().position(|b| *b == b'=')
+                && let Ok(name) = std::str::from_utf8(v.get(..i).unwrap_or_default())
+            {
+                env.set_option(name, v.get(i + 1..) == Some(b"1"));
+            }
+            continue;
+        }
+        if bytes == b"T=1" {
+            env.trap_listing_only = true;
+            continue;
+        }
+        if let Some(v) = bytes.strip_prefix(b"E=") {
+            env.errexit_ignored = v == b"1";
+            continue;
+        }
+        if let Some(v) = bytes.strip_prefix(b"s=") {
+            env.source_depth = std::str::from_utf8(v)
+                .ok()
+                .and_then(|s| s.parse().ok())
+                .unwrap_or(0);
+            continue;
+        }
+        if let Some(v) = bytes.strip_prefix(b"r=") {
+            if let Some(var) = env.variables.get_mut(v) {
+                var.readonly = true;
+            }
+            continue;
+        }
+        if let Some(v) = bytes.strip_prefix(b"A=") {
+            if let Some(i) = v.iter().position(|b| *b == b'=') {
+                env.aliases.insert(
+                    v.get(..i).unwrap_or_default().to_vec(),
+                    v.get(i + 1..).unwrap_or_default().to_vec(),
+                );
+            }
+            continue;
+        }
+        if let Some(v) = bytes.strip_prefix(b"t=") {
+            if let Some(i) = v.iter().position(|b| *b == b'=')
+                && let Some(n) = std::str::from_utf8(v.get(..i).unwrap_or_default())
+                    .ok()
+                    .and_then(|s| s.parse().ok())
+            {
+                let action = v.get(i + 1..).unwrap_or_default().to_vec();
+                if action.is_empty() {
+                    rsh::sys::trap_signal(n, Some(&action))?;
+                }
+                env.traps.insert(n, action);
+            }
+            continue;
+        }
+
         if let Some(v) = bytes.strip_prefix(b"h=") {
             env.function_depth = std::str::from_utf8(v)
                 .ok()
@@ -107,7 +233,13 @@ fn worker(args: Vec<OsString>, background: bool) -> std::io::Result<u8> {
             continue;
         }
         if let Some(v) = bytes.strip_prefix(b"f=") {
-            let tree = parser::parse(v).map_err(|e| std::io::Error::other(e.to_string()))?;
+            let fields = rsh::env::decode_snapshot(v)?;
+            let (Some(locations), Some(source)) = (fields.first(), fields.get(1)) else {
+                return Ok(usage());
+            };
+            let mut tree =
+                parser::parse(source).map_err(|e| std::io::Error::other(e.to_string()))?;
+            parser::locations::restore(&mut tree, locations);
             if let Some(rsh::ast::Command::FunctionDef { name, definition }) =
                 tree.0.first().and_then(|i| i.and_or.first.commands.first())
             {
@@ -175,15 +307,27 @@ fn worker(args: Vec<OsString>, background: bool) -> std::io::Result<u8> {
             b'u' => rsh::env::Variable {
                 value: None,
                 exported: true,
+                readonly: false,
             },
             b'e' | b'v' => rsh::env::Variable {
                 value: Some(value),
                 exported: *flag == b'e',
+                readonly: false,
             },
             _ => return Ok(usage()),
         };
         env.variables.insert(name, var);
     }
     rsh::sys::close_stdio(closed);
-    evaluate(&source, false, env, background)
+    let mut script = match parser::parse(&source) {
+        Ok(s) => s,
+        Err(e) => {
+            eprintln!("{e}");
+            return Ok(2);
+        }
+    };
+    parser::locations::restore(&mut script, &lines);
+    let mut shell = Shell::new(env, std::env::current_exe()?);
+    shell.background_signals = background;
+    Ok(shell.run(&script))
 }

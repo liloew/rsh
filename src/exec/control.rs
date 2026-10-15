@@ -58,7 +58,7 @@ impl Shell {
                 else_body,
             } => {
                 for branch in branches {
-                    match self.eval_script(&branch.condition) {
+                    match self.condition(&branch.condition) {
                         Flow::Status(0) => return Ok(self.eval_script(&branch.body)),
                         Flow::Status(_) => {}
                         flow => return Ok(flow),
@@ -102,11 +102,17 @@ impl Shell {
             }
         })
     }
+    fn condition(&mut self, script: &Script) -> Flow {
+        self.ignored_errexit += 1;
+        let flow = self.eval_script(script);
+        self.ignored_errexit -= 1;
+        flow
+    }
     fn while_loop(&mut self, condition: &Script, body: &Script, until: bool) -> Flow {
         self.loop_depth += 1;
         let mut status = 0;
         let result = loop {
-            match self.eval_script(condition) {
+            match self.condition(condition) {
                 Flow::Status(s) => {
                     if (s == 0) == until {
                         break Flow::Status(status);
@@ -132,7 +138,12 @@ impl Shell {
         let mut status = 0;
         let mut result = None;
         for value in values {
-            self.env.set(name.to_vec(), value.clone());
+            if let Err(error) = self.env.assign(name.to_vec(), value.clone()) {
+                let _ = sys::write_fd(2, format!("rsh: {error}\n").as_bytes());
+                self.env.exit_requested = Some(1);
+                result = Some(Flow::Exit(1));
+                break;
+            }
             match loop_action(self.eval_script(body), &mut status) {
                 LoopAction::Next => {}
                 LoopAction::Stop => break,
@@ -158,8 +169,8 @@ impl Shell {
                 .substitute(source)
                 .map_err(|e| crate::expand::ExpandError::new(e.to_string()))
         });
-        if result.is_err() {
-            self.env.exit_requested = Some(2);
+        if let Err(error) = &result {
+            self.env.exit_requested = Some(error.status);
         }
         Ok(result?)
     }

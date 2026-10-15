@@ -1,0 +1,1 @@
+pwd -L; pwd -P

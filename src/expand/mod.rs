@@ -8,10 +8,20 @@ use std::os::unix::ffi::OsStrExt;
 #[error("rsh: expansion: {message}")]
 pub struct ExpandError {
     pub message: String,
+    pub status: u8,
 }
 impl ExpandError {
+    pub fn readonly(s: impl Into<String>) -> Self {
+        Self {
+            message: s.into(),
+            status: 1,
+        }
+    }
     pub fn new(s: impl Into<String>) -> Self {
-        Self { message: s.into() }
+        Self {
+            message: s.into(),
+            status: 2,
+        }
     }
 }
 pub type Substitute<'a> = dyn FnMut(&[u8], &ShellEnv) -> Result<(Vec<u8>, u8), ExpandError> + 'a;
@@ -295,16 +305,7 @@ fn parameter_value(name: &[u8], env: &ShellEnv) -> Option<Vec<u8>> {
         b"#" => env.positional.len().to_string().into_bytes(),
         b"$" => env.shell_pid.to_string().into_bytes(),
         b"!" => return env.last_background.map(|p| p.to_string().into_bytes()),
-        b"-" => {
-            let mut flags = Vec::new();
-            if env.noglob {
-                flags.push(b'f');
-            }
-            if env.noclobber {
-                flags.push(b'C');
-            }
-            flags
-        }
+        b"-" => env.option_letters(),
         b"0" => env.arg0.clone(),
         b"@" | b"*" => {
             let sep = env
@@ -363,6 +364,9 @@ fn parameter(
     }
     let mut f = Field::default();
     if length {
+        if value.is_none() && env.options.nounset && name != b"@" && name != b"*" {
+            return Err(ExpandError::new("parameter not set"));
+        }
         if !tail.is_empty() {
             return Err(ExpandError::new("bad substitution"));
         }
@@ -375,6 +379,12 @@ fn parameter(
         return Ok(vec![f]);
     }
     if tail.is_empty() {
+        if value.is_none() && env.options.nounset && name != b"@" && name != b"*" {
+            return Err(ExpandError::new(format!(
+                "{}: parameter not set",
+                String::from_utf8_lossy(name)
+            )));
+        }
         f.append(value.as_deref().unwrap_or_default(), quoted, true);
         return Ok(vec![f]);
     }
@@ -409,7 +419,8 @@ fn parameter(
                     if !crate::env::valid_name(name) {
                         return Err(ExpandError::new("cannot assign special parameter"));
                     }
-                    env.set(name.to_vec(), raw);
+                    env.assign(name.to_vec(), raw)
+                        .map_err(ExpandError::readonly)?;
                 }
                 return Ok(v);
             }

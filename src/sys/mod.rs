@@ -1,4 +1,7 @@
 //! Safe process wrappers. Every child path after fork is allocation/lock free.
+mod builtins;
+pub use builtins::*;
+
 use nix::{errno::Errno, libc};
 use std::ffi::{CString, c_char};
 use std::io;
@@ -295,12 +298,13 @@ fn child_run(
             libc::SIGTTOU,
             libc::SIGCHLD,
         ] {
-            action.sa_sigaction =
-                if options.ignore_int_quit && (signal == libc::SIGINT || signal == libc::SIGQUIT) {
-                    libc::SIG_IGN
-                } else {
-                    libc::SIG_DFL
-                };
+            action.sa_sigaction = if ignored_signal(signal)
+                || options.ignore_int_quit && (signal == libc::SIGINT || signal == libc::SIGQUIT)
+            {
+                libc::SIG_IGN
+            } else {
+                libc::SIG_DFL
+            };
             libc::sigaction(signal, &action, std::ptr::null_mut());
         }
         let mut mask = std::mem::zeroed();

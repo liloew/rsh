@@ -110,9 +110,9 @@ fn shift_and_return_error_policy() {
         env!("CARGO_BIN_EXE_rsh"),
         "set -- a; shift 2; printf '%s:%s:%s\\n' \"$?\" \"$#\" \"$1\"; return 7",
     );
-    assert_eq!(out.stdout, b"1:1:a\n");
+    assert!(out.stdout.is_empty());
     assert_eq!(out.status.code(), Some(1));
-    assert!(String::from_utf8_lossy(&out.stderr).contains("return"));
+    assert!(String::from_utf8_lossy(&out.stderr).contains("shift"));
     for n in ["-1", "x", "999999999999999999999999"] {
         let o = run(
             &d,
@@ -129,7 +129,6 @@ fn shift_and_return_error_policy() {
     assert_eq!(o.stdout, b"1:b\n");
 }
 #[test]
-#[ignore = "TODO(M7): read builtin must exist before testing cmd | while read"]
 fn pipeline_while_read() {
     let d = setup();
     let out = run(

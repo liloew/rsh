@@ -1,4 +1,5 @@
-//! Byte-preserving shell variables and exported environment, without global mutation.
+pub mod options;
+// Byte-preserving shell state, without global variable/cwd mutation.
 use std::collections::BTreeMap;
 use std::os::unix::ffi::OsStrExt;
 use std::path::PathBuf;
@@ -7,10 +8,20 @@ use std::path::PathBuf;
 pub struct Variable {
     pub value: Option<Vec<u8>>,
     pub exported: bool,
+    pub readonly: bool,
 }
 
 #[derive(Debug, Clone)]
 pub struct ShellEnv {
+    pub trap_listing_only: bool,
+    pub stdin_source: bool,
+    pub stdin_lines: usize,
+    pub options: options::Options,
+    pub aliases: BTreeMap<Vec<u8>, Vec<u8>>,
+    pub traps: BTreeMap<i32, Vec<u8>>,
+    pub source_depth: usize,
+    pub errexit_ignored: bool,
+    pub getopts_offset: usize,
     pub functions: BTreeMap<Vec<u8>, std::rc::Rc<crate::ast::Function>>,
     pub function_depth: usize,
     pub variables: BTreeMap<Vec<u8>, Variable>,
@@ -18,7 +29,7 @@ pub struct ShellEnv {
     pub cwd: PathBuf,
     pub last_status: u8,
     pub exit_requested: Option<u8>,
-    /// Placeholder for set -C (the option builtin belongs to M7).
+    /// Whether set -C prevents overwriting existing regular files.
     pub noclobber: bool,
     pub noglob: bool,
     pub positional: Vec<Vec<u8>>,
@@ -32,6 +43,15 @@ impl ShellEnv {
     pub fn inherited() -> std::io::Result<Self> {
         let cwd = std::env::current_dir()?;
         let mut env = Self {
+            trap_listing_only: false,
+            stdin_source: false,
+            stdin_lines: 0,
+            options: options::Options::default(),
+            aliases: BTreeMap::new(),
+            traps: BTreeMap::new(),
+            source_depth: 0,
+            errexit_ignored: false,
+            getopts_offset: 1,
             functions: BTreeMap::new(),
             function_depth: 0,
             variables: BTreeMap::new(),
@@ -52,6 +72,7 @@ impl ShellEnv {
                 Variable {
                     value: Some(value.as_bytes().to_vec()),
                     exported: true,
+                    readonly: false,
                 },
             );
         }
@@ -64,6 +85,29 @@ impl ShellEnv {
         let pwd = env.cwd.as_os_str().as_bytes().to_vec();
         env.set(b"PWD".to_vec(), pwd);
         env.mark_exported(b"PWD".to_vec());
+        for (name, value) in [
+            (b"IFS".as_slice(), b" \t\n".as_slice()),
+            (b"PATH", b"/usr/bin:/bin"),
+            (b"PS1", b"$ "),
+            (b"PS2", b"> "),
+            (b"PS4", b"+ "),
+            (b"OPTIND", b"1"),
+            (b"OPTERR", b"1"),
+            (b"LINENO", b"1"),
+        ] {
+            if env.get(name).is_none() {
+                env.set(name.to_vec(), value.to_vec());
+            }
+        }
+        if env.get(b"HOME").is_none()
+            && let Some(home) = crate::sys::user_home(None)
+        {
+            env.set(b"HOME".to_vec(), home);
+        }
+        env.set(
+            b"PPID".to_vec(),
+            crate::sys::parent_id().to_string().into_bytes(),
+        );
         Ok(env)
     }
     pub fn get(&self, name: &[u8]) -> Option<&[u8]> {
@@ -72,13 +116,30 @@ impl ShellEnv {
             .and_then(|var| var.value.as_deref())
     }
     pub fn set(&mut self, name: Vec<u8>, value: Vec<u8>) {
+        if name == b"OPTIND" {
+            self.getopts_offset = 1;
+        }
         self.variables
             .entry(name)
             .and_modify(|var| var.value = Some(value.clone()))
             .or_insert(Variable {
                 value: Some(value),
                 exported: false,
+                readonly: false,
             });
+    }
+    pub fn is_readonly(&self, name: &[u8]) -> bool {
+        self.variables.get(name).is_some_and(|v| v.readonly)
+    }
+    pub fn assign(&mut self, name: Vec<u8>, value: Vec<u8>) -> Result<(), String> {
+        if self.is_readonly(&name) {
+            return Err(format!(
+                "{}: readonly variable",
+                String::from_utf8_lossy(&name)
+            ));
+        }
+        self.set(name, value);
+        Ok(())
     }
     pub fn mark_exported(&mut self, name: Vec<u8>) {
         self.variables
@@ -86,6 +147,7 @@ impl ShellEnv {
             .or_insert(Variable {
                 value: None,
                 exported: false,
+                readonly: false,
             })
             .exported = true;
     }
@@ -145,6 +207,15 @@ mod tests {
     #[test]
     fn export_flags_survive_assignment_and_unset_export_is_not_empty() {
         let mut env = ShellEnv {
+            trap_listing_only: false,
+            stdin_source: false,
+            stdin_lines: 0,
+            options: options::Options::default(),
+            aliases: BTreeMap::new(),
+            traps: BTreeMap::new(),
+            source_depth: 0,
+            errexit_ignored: false,
+            getopts_offset: 1,
             functions: BTreeMap::new(),
             function_depth: 0,
             variables: BTreeMap::new(),

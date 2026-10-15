@@ -195,6 +195,9 @@ fn value(e: &Expr, env: &mut ShellEnv, depth: usize) -> Result<i64, ExpandError>
     Ok(match e {
         Expr::Number(n) => *n,
         Expr::Var(n) => {
+            if env.get(n).is_none() && env.options.nounset {
+                return Err(ExpandError::new("arithmetic: parameter not set"));
+            }
             let source = env.get(n).unwrap_or(b"0").to_vec();
             eval_depth(&source, env, depth + 1)?
         }
@@ -217,7 +220,8 @@ fn value(e: &Expr, env: &mut ShellEnv, depth: usize) -> Result<i64, ExpandError>
                     depth + 1,
                 )?
             };
-            env.set(name.clone(), result.to_string().into_bytes());
+            env.assign(name.clone(), result.to_string().into_bytes())
+                .map_err(ExpandError::readonly)?;
             result
         }
         Expr::Unary(op, e) => {

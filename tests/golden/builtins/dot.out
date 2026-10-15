@@ -1,0 +1,4 @@
+source:2:inner
+status:4:2:outer
+source:2:outer
+status:4:1:modified

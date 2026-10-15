@@ -103,6 +103,15 @@ pub fn lex(input: &[u8]) -> Result<Vec<Token>, LexError> {
     lexer.tokens(0, false).map(|(tokens, _)| tokens)
 }
 
+/// Alias token-source hook; the parser requests it only in eligible command positions.
+pub(crate) fn alias_tokens(value: &[u8], origin: Span) -> Result<Vec<Token>, LexError> {
+    let mut tokens = lex(value)?;
+    for t in &mut tokens {
+        t.span = origin;
+    }
+    Ok(tokens)
+}
+
 #[derive(Clone)]
 struct Lexer<'a> {
     input: &'a [u8],

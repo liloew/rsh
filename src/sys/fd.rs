@@ -149,11 +149,34 @@ impl FdPlan {
                             OpenMode::ReadWrite => libc::O_RDWR | libc::O_CREAT,
                             OpenMode::NoClobber => libc::O_WRONLY | libc::O_CREAT | libc::O_EXCL,
                         };
-                        let opened = libc::open(
+                        let mut opened = libc::open(
                             path.as_ptr(),
                             flags | libc::O_CLOEXEC,
                             0o666 as libc::c_uint,
                         );
+                        if opened < 0
+                            && matches!(mode, OpenMode::NoClobber)
+                            && Errno::last_raw() == libc::EEXIST
+                        {
+                            opened = libc::open(path.as_ptr(), libc::O_WRONLY | libc::O_CLOEXEC);
+                            if opened >= 0 {
+                                let mut stat: libc::stat = std::mem::zeroed();
+                                if libc::fstat(opened, &mut stat) < 0 {
+                                    libc::close(opened);
+                                    return Err(FdFailure {
+                                        index,
+                                        errno: Errno::last_raw(),
+                                    });
+                                }
+                                if stat.st_mode & libc::S_IFMT == libc::S_IFREG {
+                                    libc::close(opened);
+                                    return Err(FdFailure {
+                                        index,
+                                        errno: libc::EEXIST,
+                                    });
+                                }
+                            }
+                        }
                         if opened < 0 {
                             -1
                         } else {

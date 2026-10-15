@@ -193,7 +193,7 @@ fn path_permission_fallback_is_scoped_and_byte_environment_survives() {
     let (out, _) = capture(cmd);
     assert_eq!(out.stdout, b"\xff\n");
     assert!(out.status.success());
-    std::fs::write(dir.0.join("nul-script"), b"printf '\0'").unwrap();
+    std::fs::write(dir.0.join("nul-script"), b"/usr/bin/printf '\0'").unwrap();
     let mut cmd = dir.command(env!("CARGO_BIN_EXE_rsh"));
     cmd.arg("nul-script");
     let (out, _) = capture(cmd);

@@ -94,10 +94,26 @@ pub struct Function {
     pub redirs: Vec<Redirection>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone)]
 pub struct SimpleCommand {
+    /// Source location is diagnostic metadata, excluded from semantic equality/dumps.
+    pub line: usize,
     /// Preserve assignment/word/redirection order for later execution.
     pub parts: Vec<SimplePart>,
+}
+
+impl PartialEq for SimpleCommand {
+    fn eq(&self, other: &Self) -> bool {
+        self.parts == other.parts
+    }
+}
+impl Eq for SimpleCommand {}
+impl std::fmt::Debug for SimpleCommand {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SimpleCommand")
+            .field("parts", &self.parts)
+            .finish()
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

@@ -1,4 +1,5 @@
 //! Hand-written recursive descent for SPEC 4.1; no execution or expansion.
+pub mod locations;
 use crate::ast::*;
 use crate::lexer::{self, LexError, Operator as Op, Token, TokenKind};
 
@@ -19,6 +20,19 @@ pub enum ParseError {
 }
 
 pub fn parse(input: &[u8]) -> Result<Script, ParseError> {
+    parse_at(input, None, 0)
+}
+pub fn parse_with_aliases<'a>(
+    input: &'a [u8],
+    aliases: &'a std::collections::BTreeMap<Vec<u8>, Vec<u8>>,
+) -> Result<Script, ParseError> {
+    parse_at(input, Some(aliases), 0)
+}
+pub fn parse_at<'a>(
+    input: &'a [u8],
+    aliases: Option<&'a std::collections::BTreeMap<Vec<u8>, Vec<u8>>>,
+    line_base: usize,
+) -> Result<Script, ParseError> {
     let tokens = lexer::lex(input).map_err(|error| match error {
         LexError::Incomplete(reason) => ParseError::Incomplete(format!(
             "{} at {}:{}",
@@ -27,7 +41,11 @@ pub fn parse(input: &[u8]) -> Result<Script, ParseError> {
         LexError::NestingLimit(_) => ParseError::NestingLimit,
     })?;
     let mut parser = Parser {
+        disabled: vec![std::collections::BTreeSet::new(); tokens.len()],
+        aliases,
+        alias_force: std::collections::BTreeSet::new(),
         tokens,
+        line_base,
         index: 0,
         input,
     };
@@ -40,11 +58,56 @@ pub fn parse(input: &[u8]) -> Result<Script, ParseError> {
 
 struct Parser<'a> {
     tokens: Vec<Token>,
+    aliases: Option<&'a std::collections::BTreeMap<Vec<u8>, Vec<u8>>>,
+    disabled: Vec<std::collections::BTreeSet<Vec<u8>>>,
+    alias_force: std::collections::BTreeSet<usize>,
     index: usize,
     input: &'a [u8],
+    line_base: usize,
 }
 
 impl Parser<'_> {
+    fn alias(&mut self) -> Result<(), ParseError> {
+        loop {
+            let Some(table) = self.aliases else {
+                return Ok(());
+            };
+            let Some(token) = self.peek() else {
+                return Ok(());
+            };
+            let TokenKind::Word(Word(parts)) = &token.kind else {
+                return Ok(());
+            };
+            let [WordPart::Literal(name)] = parts.as_slice() else {
+                return Ok(());
+            };
+            let Some(value) = table.get(name) else {
+                return Ok(());
+            };
+            let span = token.span;
+            let mut disabled = self.disabled.get(self.index).cloned().unwrap_or_default();
+            if disabled.contains(name) {
+                return Ok(());
+            }
+            if disabled.len() >= 64 {
+                return Err(ParseError::NestingLimit);
+            }
+            disabled.insert(name.clone());
+            if value.last().is_some_and(u8::is_ascii_whitespace)
+                && let Some(t) = self.tokens.get(self.index + 1)
+            {
+                self.alias_force.insert(t.span.start.offset);
+            }
+            let replacement = lexer::alias_tokens(value, span).map_err(|e| match e {
+                LexError::Incomplete(r) => ParseError::Incomplete(r.construct.into()),
+                LexError::NestingLimit(_) => ParseError::NestingLimit,
+            })?;
+            let n = replacement.len();
+            self.tokens.splice(self.index..self.index + 1, replacement);
+            self.disabled
+                .splice(self.index..self.index + 1, std::iter::repeat_n(disabled, n));
+        }
+    }
     fn peek(&self) -> Option<&Token> {
         self.tokens.get(self.index)
     }
@@ -144,6 +207,10 @@ impl Parser<'_> {
         depth: usize,
     ) -> Result<Script, ParseError> {
         self.linebreak();
+        if !self.stopped(stops, close) {
+            self.alias()?;
+            self.linebreak();
+        }
         let mut items = Vec::new();
         if self.peek().is_none() || self.stopped(stops, close) {
             return if empty {
@@ -204,6 +271,7 @@ impl Parser<'_> {
         Ok(Pipeline { negated, commands })
     }
     fn command(&mut self, depth: usize) -> Result<Command, ParseError> {
+        self.alias()?;
         if depth >= MAX_NESTING {
             return Err(ParseError::NestingLimit);
         }
@@ -312,9 +380,23 @@ impl Parser<'_> {
         }
     }
     fn simple(&mut self) -> Result<Command, ParseError> {
+        let line = self
+            .peek()
+            .map_or(1, |t| t.span.start.line)
+            .saturating_add(self.line_base);
         let mut parts = Vec::new();
         let mut command_word = false;
         loop {
+            if !command_word
+                || self
+                    .peek()
+                    .is_some_and(|t| self.alias_force.contains(&t.span.start.offset))
+            {
+                if let Some(offset) = self.peek().map(|t| t.span.start.offset) {
+                    self.alias_force.remove(&offset);
+                }
+                self.alias()?;
+            }
             if self.redir_start() {
                 parts.push(SimplePart::Redirection(self.redirection()?));
             } else if matches!(self.peek().map(|t| &t.kind), Some(TokenKind::Word(_))) {
@@ -332,7 +414,7 @@ impl Parser<'_> {
         if parts.is_empty() {
             return Err(self.error("command"));
         }
-        Ok(Command::Simple(SimpleCommand { parts }))
+        Ok(Command::Simple(SimpleCommand { parts, line }))
     }
     fn redir_start(&self) -> bool {
         matches!(self.peek().map(|t| &t.kind), Some(TokenKind::IoNumber(_)))
@@ -495,7 +577,7 @@ fn valid_name(name: &[u8]) -> bool {
         && name.iter().all(|c| c.is_ascii_alphanumeric() || *c == b'_')
 }
 
-fn assignment(word: &Word) -> Option<Assignment> {
+pub(crate) fn assignment(word: &Word) -> Option<Assignment> {
     let (first, rest) = word.0.split_first()?;
     let WordPart::Literal(bytes) = first else {
         return None;

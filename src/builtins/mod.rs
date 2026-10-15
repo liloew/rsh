@@ -1,11 +1,35 @@
-//! Minimal execution builtins, M6 control flow and the existing M5 options.
-//! Remaining builtin behavior is TODO(M7).
-use crate::env::{ShellEnv, valid_name};
+//! POSIX builtin dispatch; execution-context operations live in exec.
+pub mod misc;
+mod printf;
+mod read;
+mod test;
+pub mod variables;
+use crate::env::ShellEnv;
 use std::os::unix::ffi::OsStrExt;
 use std::path::{Component, Path, PathBuf};
 
 #[derive(Debug, Clone, Copy)]
 pub enum Builtin {
+    Dot,
+    Eval,
+    Readonly,
+    Unset,
+    Times,
+    Trap,
+    Echo,
+    Printf,
+    Test,
+    Bracket,
+    Read,
+    Type,
+    Command,
+    Alias,
+    Unalias,
+    Getopts,
+    Umask,
+    Wait,
+    Kill,
+    Hash,
     Break,
     Continue,
     Return,
@@ -23,6 +47,12 @@ pub enum Builtin {
 
 pub fn special(name: &[u8]) -> Option<Builtin> {
     match name {
+        b"." => Some(Builtin::Dot),
+        b"eval" => Some(Builtin::Eval),
+        b"readonly" => Some(Builtin::Readonly),
+        b"unset" => Some(Builtin::Unset),
+        b"times" => Some(Builtin::Times),
+        b"trap" => Some(Builtin::Trap),
         b"break" => Some(Builtin::Break),
         b"continue" => Some(Builtin::Continue),
         b"return" => Some(Builtin::Return),
@@ -57,6 +87,20 @@ pub fn is_special_name(name: &[u8]) -> bool {
 }
 pub fn regular(name: &[u8]) -> Option<Builtin> {
     match name {
+        b"echo" => Some(Builtin::Echo),
+        b"printf" => Some(Builtin::Printf),
+        b"test" => Some(Builtin::Test),
+        b"[" => Some(Builtin::Bracket),
+        b"read" => Some(Builtin::Read),
+        b"type" => Some(Builtin::Type),
+        b"command" => Some(Builtin::Command),
+        b"alias" => Some(Builtin::Alias),
+        b"unalias" => Some(Builtin::Unalias),
+        b"getopts" => Some(Builtin::Getopts),
+        b"umask" => Some(Builtin::Umask),
+        b"wait" => Some(Builtin::Wait),
+        b"kill" => Some(Builtin::Kill),
+        b"hash" => Some(Builtin::Hash),
         b"true" => Some(Builtin::True),
         b"false" => Some(Builtin::False),
         b"cd" => Some(Builtin::Cd),
@@ -92,47 +136,54 @@ pub fn run(builtin: Builtin, args: &[Vec<u8>], env: &mut ShellEnv) -> Outcome {
     match builtin {
         Builtin::Break | Builtin::Continue | Builtin::Return => control(builtin, args, env, 0),
         Builtin::Shift => shift(args, env),
-        Builtin::Set => {
-            let mut i = 0;
-            while let Some(arg) = args.get(i) {
-                if arg == b"--" {
-                    i += 1;
-                    env.positional = args.get(i..).unwrap_or_default().to_vec();
-                    return Outcome::default();
-                }
-                if arg == b"-f" || arg == b"+f" {
-                    env.noglob = arg == b"-f";
-                    i += 1;
-                } else if arg == b"-C" || arg == b"+C" {
-                    env.noclobber = arg == b"-C";
-                    i += 1;
-                } else if arg.starts_with(b"-") || arg.starts_with(b"+") {
-                    return Outcome::error(
-                        b"set",
-                        b"unsupported option (remaining options TODO(M7))",
-                        2,
-                    );
-                } else {
-                    env.positional = args.get(i..).unwrap_or_default().to_vec();
-                    return Outcome::default();
-                }
+        Builtin::Set => variables::set(args, env),
+        Builtin::Export => variables::attributes(args, env, false),
+        Builtin::Readonly => variables::attributes(args, env, true),
+        Builtin::Unset => variables::unset(args, env),
+        Builtin::Echo => {
+            let skip = usize::from(args.first().is_some_and(|a| a == b"-n"));
+            let mut stdout = args.get(skip..).unwrap_or_default().join(b" ".as_slice());
+            if skip == 0 {
+                stdout.push(b'\n');
             }
-            Outcome::default()
-        }
-        Builtin::Exec => {
-            if args.is_empty() {
-                Outcome::default()
-            } else {
-                Outcome::error(b"exec", b"command replacement is TODO(M7)", 2)
+            Outcome {
+                stdout,
+                ..Outcome::default()
             }
         }
+        Builtin::Printf => printf::run(args),
+        Builtin::Test | Builtin::Bracket => {
+            test::run(args, matches!(builtin, Builtin::Bracket), env)
+        }
+        Builtin::Read => read::run(args, env),
+        Builtin::Alias | Builtin::Unalias => {
+            misc::alias(args, env, matches!(builtin, Builtin::Unalias))
+        }
+        Builtin::Getopts => misc::getopts(args, env),
+        Builtin::Umask => misc::umask(args),
+        Builtin::Kill => misc::kill(args),
+        Builtin::Trap => misc::trap(args, env),
+        Builtin::Times if !args.is_empty() => Outcome::error(b"times", b"unexpected operand", 2),
+        Builtin::Times => match crate::sys::times_text() {
+            Ok(stdout) => Outcome {
+                stdout,
+                ..Outcome::default()
+            },
+            Err(e) => Outcome::error(b"times", e.to_string().as_bytes(), 1),
+        },
+        Builtin::Hash => Outcome::default(),
+        Builtin::Dot
+        | Builtin::Eval
+        | Builtin::Exec
+        | Builtin::Type
+        | Builtin::Command
+        | Builtin::Wait => Outcome::error(b"builtin", b"execution context required", 2),
         Builtin::Colon | Builtin::True => Outcome::default(),
         Builtin::False => Outcome {
             status: 1,
             ..Outcome::default()
         },
         Builtin::Exit => exit(args, env),
-        Builtin::Export => export(args, env),
         Builtin::Cd => cd(args, env),
         Builtin::Pwd => pwd(args, env),
     }
@@ -181,47 +232,6 @@ fn exit_code(arg: &[u8]) -> Option<u8> {
     }
     Some(if negative { code.wrapping_neg() } else { code })
 }
-fn export(args: &[Vec<u8>], env: &mut ShellEnv) -> Outcome {
-    if args.is_empty() || args == [b"-p".to_vec()] {
-        let mut stdout = Vec::new();
-        for (name, var) in &env.variables {
-            if !var.exported || !valid_name(name) {
-                continue;
-            }
-            stdout.extend_from_slice(b"export ");
-            stdout.extend_from_slice(name);
-            if let Some(value) = &var.value {
-                stdout.extend_from_slice(b"='");
-                for byte in value {
-                    if *byte == b'\'' {
-                        stdout.extend_from_slice(b"'\\''");
-                    } else {
-                        stdout.push(*byte);
-                    }
-                }
-                stdout.push(b'\'');
-            }
-            stdout.push(b'\n');
-        }
-        return Outcome {
-            stdout,
-            ..Outcome::default()
-        };
-    }
-    for arg in args {
-        let equal = arg.iter().position(|c| *c == b'=');
-        let name = equal.and_then(|i| arg.get(..i)).unwrap_or(arg);
-        if !valid_name(name) {
-            env.exit_requested = Some(2);
-            return Outcome::error(b"export", b"invalid variable name", 2);
-        }
-        if let Some(value) = equal.and_then(|i| arg.get(i + 1..)) {
-            env.set(name.to_vec(), value.to_vec());
-        }
-        env.mark_exported(name.to_vec());
-    }
-    Outcome::default()
-}
 fn cd(args: &[Vec<u8>], env: &mut ShellEnv) -> Outcome {
     let mut physical = false;
     let mut operands = args;
@@ -254,7 +264,31 @@ fn cd(args: &[Vec<u8>], env: &mut ShellEnv) -> Outcome {
     if target.is_empty() {
         return Outcome::default();
     }
-    let path = Path::new(std::ffi::OsStr::from_bytes(target));
+    let mut selected = target.to_vec();
+    let mut cdpath_print = false;
+    if !print
+        && !target.starts_with(b"/")
+        && !matches!(target.split(|b| *b == b'/').next(), Some(b"." | b".."))
+        && let Some(cdpath) = env.get(b"CDPATH")
+    {
+        for prefix in cdpath.split(|b| *b == b':') {
+            let mut candidate = prefix.to_vec();
+            if !candidate.is_empty() {
+                candidate.push(b'/');
+            }
+            candidate.extend(target);
+            let p = env.cwd.join(std::ffi::OsStr::from_bytes(&candidate));
+            if p.is_dir() && crate::sys::directory_searchable(&p).is_ok() {
+                selected = candidate;
+                cdpath_print = !prefix.is_empty();
+                break;
+            }
+        }
+    }
+    if env.is_readonly(b"PWD") || env.is_readonly(b"OLDPWD") {
+        return Outcome::error(b"cd", b"readonly PWD or OLDPWD", 1);
+    }
+    let path = Path::new(std::ffi::OsStr::from_bytes(&selected));
     let joined = if path.is_absolute() {
         path.to_path_buf()
     } else {
@@ -279,7 +313,7 @@ fn cd(args: &[Vec<u8>], env: &mut ShellEnv) -> Outcome {
     let pwd = env.cwd.as_os_str().as_bytes().to_vec();
     env.set(b"PWD".to_vec(), pwd.clone());
     env.mark_exported(b"PWD".to_vec());
-    let stdout = if print {
+    let stdout = if print || cdpath_print {
         let mut text = pwd;
         text.push(b'\n');
         text
@@ -367,7 +401,7 @@ pub fn control(builtin: Builtin, args: &[Vec<u8>], env: &mut ShellEnv, loops: us
             }
         }
         Builtin::Return => {
-            if env.function_depth == 0 {
+            if env.function_depth == 0 && env.source_depth == 0 {
                 return Outcome::error(b"return", b"not in a function or sourced script", 1);
             }
             if args.len() > 1 {

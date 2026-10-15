@@ -1,0 +1,6 @@
+a:b;c:;
+-3 16 10 9 1f 1F Z abc %
+[+00003][0x00001f][x    ][   ab]
+a	bEND
+missing:0:<>
+stop

@@ -1,0 +1,3 @@
+trap -- 'echo exit:$?' EXIT
+trap -- '' USR1
+exit:1

@@ -38,7 +38,7 @@ fn empty_command_succeeds() {
 
 #[test]
 fn invalid_cli_reports_usage() {
-    for args in [vec!["-c"], vec!["-x", "cmd"]] {
+    for args in [vec!["-c"], vec!["-Z", "cmd"]] {
         let output = run(&args);
         assert_eq!(output.status.code(), Some(2));
         assert!(output.stdout.is_empty());
