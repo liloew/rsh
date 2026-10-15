@@ -1,0 +1,370 @@
+Script(
+    [
+        ListItem {
+            and_or: AndOr {
+                first: Pipeline {
+                    negated: false,
+                    commands: [
+                        Simple(
+                            SimpleCommand {
+                                parts: [
+                                    Assignment(
+                                        Assignment {
+                                            name: [
+                                                65,
+                                            ],
+                                            value: Word(
+                                                [
+                                                    Literal(
+                                                        [
+                                                            111,
+                                                            110,
+                                                            101,
+                                                        ],
+                                                    ),
+                                                ],
+                                            ),
+                                        },
+                                    ),
+                                    Assignment(
+                                        Assignment {
+                                            name: [
+                                                66,
+                                            ],
+                                            value: Word(
+                                                [
+                                                    DoubleQuoted(
+                                                        [
+                                                            Literal(
+                                                                [
+                                                                    116,
+                                                                    119,
+                                                                    111,
+                                                                ],
+                                                            ),
+                                                        ],
+                                                    ),
+                                                ],
+                                            ),
+                                        },
+                                    ),
+                                    Redirection(
+                                        Redirection {
+                                            fd: None,
+                                            op: Output,
+                                            target: Word(
+                                                [
+                                                    Literal(
+                                                        [
+                                                            111,
+                                                            117,
+                                                            116,
+                                                        ],
+                                                    ),
+                                                ],
+                                            ),
+                                        },
+                                    ),
+                                    Word(
+                                        Word(
+                                            [
+                                                Literal(
+                                                    [
+                                                        99,
+                                                        109,
+                                                        100,
+                                                    ],
+                                                ),
+                                            ],
+                                        ),
+                                    ),
+                                    Word(
+                                        Word(
+                                            [
+                                                Literal(
+                                                    [
+                                                        105,
+                                                        102,
+                                                    ],
+                                                ),
+                                            ],
+                                        ),
+                                    ),
+                                    Word(
+                                        Word(
+                                            [
+                                                Literal(
+                                                    [
+                                                        67,
+                                                        61,
+                                                        97,
+                                                        114,
+                                                        103,
+                                                    ],
+                                                ),
+                                            ],
+                                        ),
+                                    ),
+                                    Redirection(
+                                        Redirection {
+                                            fd: Some(
+                                                [
+                                                    50,
+                                                ],
+                                            ),
+                                            op: DupOutput,
+                                            target: Word(
+                                                [
+                                                    Literal(
+                                                        [
+                                                            49,
+                                                        ],
+                                                    ),
+                                                ],
+                                            ),
+                                        },
+                                    ),
+                                    Redirection(
+                                        Redirection {
+                                            fd: None,
+                                            op: Input,
+                                            target: Word(
+                                                [
+                                                    Literal(
+                                                        [
+                                                            105,
+                                                            110,
+                                                        ],
+                                                    ),
+                                                ],
+                                            ),
+                                        },
+                                    ),
+                                    Redirection(
+                                        Redirection {
+                                            fd: None,
+                                            op: Append,
+                                            target: Word(
+                                                [
+                                                    Literal(
+                                                        [
+                                                            108,
+                                                            111,
+                                                            103,
+                                                        ],
+                                                    ),
+                                                ],
+                                            ),
+                                        },
+                                    ),
+                                    Redirection(
+                                        Redirection {
+                                            fd: Some(
+                                                [
+                                                    51,
+                                                ],
+                                            ),
+                                            op: DupInput,
+                                            target: Word(
+                                                [
+                                                    Literal(
+                                                        [
+                                                            48,
+                                                        ],
+                                                    ),
+                                                ],
+                                            ),
+                                        },
+                                    ),
+                                    Redirection(
+                                        Redirection {
+                                            fd: Some(
+                                                [
+                                                    52,
+                                                ],
+                                            ),
+                                            op: ReadWrite,
+                                            target: Word(
+                                                [
+                                                    Literal(
+                                                        [
+                                                            102,
+                                                            105,
+                                                            108,
+                                                            101,
+                                                        ],
+                                                    ),
+                                                ],
+                                            ),
+                                        },
+                                    ),
+                                    Redirection(
+                                        Redirection {
+                                            fd: None,
+                                            op: Clobber,
+                                            target: Word(
+                                                [
+                                                    Literal(
+                                                        [
+                                                            99,
+                                                            108,
+                                                            111,
+                                                            98,
+                                                            98,
+                                                            101,
+                                                            114,
+                                                        ],
+                                                    ),
+                                                ],
+                                            ),
+                                        },
+                                    ),
+                                ],
+                            },
+                        ),
+                    ],
+                },
+                rest: [],
+            },
+            separator: Sequential,
+        },
+        ListItem {
+            and_or: AndOr {
+                first: Pipeline {
+                    negated: false,
+                    commands: [
+                        Simple(
+                            SimpleCommand {
+                                parts: [
+                                    Assignment(
+                                        Assignment {
+                                            name: [
+                                                79,
+                                                78,
+                                                76,
+                                                89,
+                                            ],
+                                            value: Word(
+                                                [
+                                                    Literal(
+                                                        [
+                                                            97,
+                                                            115,
+                                                            115,
+                                                            105,
+                                                            103,
+                                                            110,
+                                                            109,
+                                                            101,
+                                                            110,
+                                                            116,
+                                                        ],
+                                                    ),
+                                                ],
+                                            ),
+                                        },
+                                    ),
+                                ],
+                            },
+                        ),
+                    ],
+                },
+                rest: [],
+            },
+            separator: Sequential,
+        },
+        ListItem {
+            and_or: AndOr {
+                first: Pipeline {
+                    negated: false,
+                    commands: [
+                        Simple(
+                            SimpleCommand {
+                                parts: [
+                                    Redirection(
+                                        Redirection {
+                                            fd: None,
+                                            op: Input,
+                                            target: Word(
+                                                [
+                                                    Literal(
+                                                        [
+                                                            111,
+                                                            110,
+                                                            108,
+                                                            121,
+                                                            45,
+                                                            114,
+                                                            101,
+                                                            100,
+                                                            105,
+                                                            114,
+                                                            101,
+                                                            99,
+                                                            116,
+                                                            105,
+                                                            111,
+                                                            110,
+                                                        ],
+                                                    ),
+                                                ],
+                                            ),
+                                        },
+                                    ),
+                                ],
+                            },
+                        ),
+                    ],
+                },
+                rest: [],
+            },
+            separator: Sequential,
+        },
+        ListItem {
+            and_or: AndOr {
+                first: Pipeline {
+                    negated: false,
+                    commands: [
+                        Simple(
+                            SimpleCommand {
+                                parts: [
+                                    Word(
+                                        Word(
+                                            [
+                                                Literal(
+                                                    [
+                                                        50,
+                                                    ],
+                                                ),
+                                            ],
+                                        ),
+                                    ),
+                                    Redirection(
+                                        Redirection {
+                                            fd: None,
+                                            op: Output,
+                                            target: Word(
+                                                [
+                                                    Literal(
+                                                        [
+                                                            102,
+                                                            105,
+                                                            108,
+                                                            101,
+                                                        ],
+                                                    ),
+                                                ],
+                                            ),
+                                        },
+                                    ),
+                                ],
+                            },
+                        ),
+                    ],
+                },
+                rest: [],
+            },
+            separator: Sequential,
+        },
+    ],
+)

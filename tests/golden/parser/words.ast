@@ -1,0 +1,258 @@
+Script(
+    [
+        ListItem {
+            and_or: AndOr {
+                first: Pipeline {
+                    negated: false,
+                    commands: [
+                        Simple(
+                            SimpleCommand {
+                                parts: [
+                                    Assignment(
+                                        Assignment {
+                                            name: [
+                                                65,
+                                            ],
+                                            value: Word(
+                                                [
+                                                    Literal(
+                                                        [
+                                                            126,
+                                                            120,
+                                                            47,
+                                                            112,
+                                                            97,
+                                                            116,
+                                                            104,
+                                                        ],
+                                                    ),
+                                                ],
+                                            ),
+                                        },
+                                    ),
+                                    Word(
+                                        Word(
+                                            [
+                                                Literal(
+                                                    [
+                                                        99,
+                                                        109,
+                                                        100,
+                                                    ],
+                                                ),
+                                            ],
+                                        ),
+                                    ),
+                                    Word(
+                                        Word(
+                                            [
+                                                SingleQuoted(
+                                                    [
+                                                        36,
+                                                        114,
+                                                        97,
+                                                        119,
+                                                    ],
+                                                ),
+                                            ],
+                                        ),
+                                    ),
+                                    Word(
+                                        Word(
+                                            [
+                                                DoubleQuoted(
+                                                    [
+                                                        Literal(
+                                                            [
+                                                                97,
+                                                            ],
+                                                        ),
+                                                        CommandSub(
+                                                            CommandSub {
+                                                                style: DollarParen,
+                                                                source: [
+                                                                    101,
+                                                                    99,
+                                                                    104,
+                                                                    111,
+                                                                    32,
+                                                                    34,
+                                                                    41,
+                                                                    34,
+                                                                ],
+                                                            },
+                                                        ),
+                                                    ],
+                                                ),
+                                            ],
+                                        ),
+                                    ),
+                                    Word(
+                                        Word(
+                                            [
+                                                Param(
+                                                    Braced(
+                                                        [
+                                                            120,
+                                                            58,
+                                                            45,
+                                                            36,
+                                                            123,
+                                                            121,
+                                                            125,
+                                                        ],
+                                                    ),
+                                                ),
+                                            ],
+                                        ),
+                                    ),
+                                    Word(
+                                        Word(
+                                            [
+                                                Arith(
+                                                    [
+                                                        49,
+                                                        32,
+                                                        43,
+                                                        32,
+                                                        40,
+                                                        50,
+                                                        41,
+                                                    ],
+                                                ),
+                                            ],
+                                        ),
+                                    ),
+                                    Word(
+                                        Word(
+                                            [
+                                                CommandSub(
+                                                    CommandSub {
+                                                        style: Backtick,
+                                                        source: [
+                                                            101,
+                                                            99,
+                                                            104,
+                                                            111,
+                                                            32,
+                                                            120,
+                                                        ],
+                                                    },
+                                                ),
+                                            ],
+                                        ),
+                                    ),
+                                    Word(
+                                        Word(
+                                            [
+                                                Tilde(
+                                                    None,
+                                                ),
+                                                Literal(
+                                                    [
+                                                        47,
+                                                        102,
+                                                        105,
+                                                        108,
+                                                        101,
+                                                    ],
+                                                ),
+                                            ],
+                                        ),
+                                    ),
+                                    Word(
+                                        Word(
+                                            [
+                                                Glob(
+                                                    Star,
+                                                ),
+                                                Glob(
+                                                    Question,
+                                                ),
+                                                Glob(
+                                                    OpenBracket,
+                                                ),
+                                                Literal(
+                                                    [
+                                                        97,
+                                                        98,
+                                                        99,
+                                                        93,
+                                                    ],
+                                                ),
+                                            ],
+                                        ),
+                                    ),
+                                    Word(
+                                        Word(
+                                            [
+                                                Literal(
+                                                    [
+                                                        97,
+                                                    ],
+                                                ),
+                                                Escaped(
+                                                    32,
+                                                ),
+                                                Literal(
+                                                    [
+                                                        98,
+                                                    ],
+                                                ),
+                                            ],
+                                        ),
+                                    ),
+                                ],
+                            },
+                        ),
+                    ],
+                },
+                rest: [],
+            },
+            separator: Sequential,
+        },
+        ListItem {
+            and_or: AndOr {
+                first: Pipeline {
+                    negated: false,
+                    commands: [
+                        Simple(
+                            SimpleCommand {
+                                parts: [
+                                    Word(
+                                        Word(
+                                            [
+                                                SingleQuoted(
+                                                    [
+                                                        105,
+                                                        102,
+                                                    ],
+                                                ),
+                                            ],
+                                        ),
+                                    ),
+                                    Word(
+                                        Word(
+                                            [
+                                                Literal(
+                                                    [
+                                                        116,
+                                                        104,
+                                                        101,
+                                                        110,
+                                                    ],
+                                                ),
+                                            ],
+                                        ),
+                                    ),
+                                ],
+                            },
+                        ),
+                    ],
+                },
+                rest: [],
+            },
+            separator: Sequential,
+        },
+    ],
+)

@@ -1,0 +1,327 @@
+Script(
+    [
+        ListItem {
+            and_or: AndOr {
+                first: Pipeline {
+                    negated: false,
+                    commands: [
+                        Compound(
+                            If {
+                                branches: [
+                                    IfBranch {
+                                        condition: Script(
+                                            [
+                                                ListItem {
+                                                    and_or: AndOr {
+                                                        first: Pipeline {
+                                                            negated: false,
+                                                            commands: [
+                                                                Simple(
+                                                                    SimpleCommand {
+                                                                        parts: [
+                                                                            Word(
+                                                                                Word(
+                                                                                    [
+                                                                                        Literal(
+                                                                                            [
+                                                                                                97,
+                                                                                            ],
+                                                                                        ),
+                                                                                    ],
+                                                                                ),
+                                                                            ),
+                                                                        ],
+                                                                    },
+                                                                ),
+                                                            ],
+                                                        },
+                                                        rest: [],
+                                                    },
+                                                    separator: Sequential,
+                                                },
+                                            ],
+                                        ),
+                                        body: Script(
+                                            [
+                                                ListItem {
+                                                    and_or: AndOr {
+                                                        first: Pipeline {
+                                                            negated: false,
+                                                            commands: [
+                                                                Simple(
+                                                                    SimpleCommand {
+                                                                        parts: [
+                                                                            Word(
+                                                                                Word(
+                                                                                    [
+                                                                                        Literal(
+                                                                                            [
+                                                                                                98,
+                                                                                            ],
+                                                                                        ),
+                                                                                    ],
+                                                                                ),
+                                                                            ),
+                                                                        ],
+                                                                    },
+                                                                ),
+                                                            ],
+                                                        },
+                                                        rest: [],
+                                                    },
+                                                    separator: Sequential,
+                                                },
+                                            ],
+                                        ),
+                                    },
+                                    IfBranch {
+                                        condition: Script(
+                                            [
+                                                ListItem {
+                                                    and_or: AndOr {
+                                                        first: Pipeline {
+                                                            negated: false,
+                                                            commands: [
+                                                                Simple(
+                                                                    SimpleCommand {
+                                                                        parts: [
+                                                                            Word(
+                                                                                Word(
+                                                                                    [
+                                                                                        Literal(
+                                                                                            [
+                                                                                                99,
+                                                                                            ],
+                                                                                        ),
+                                                                                    ],
+                                                                                ),
+                                                                            ),
+                                                                        ],
+                                                                    },
+                                                                ),
+                                                            ],
+                                                        },
+                                                        rest: [],
+                                                    },
+                                                    separator: Sequential,
+                                                },
+                                            ],
+                                        ),
+                                        body: Script(
+                                            [
+                                                ListItem {
+                                                    and_or: AndOr {
+                                                        first: Pipeline {
+                                                            negated: false,
+                                                            commands: [
+                                                                Compound(
+                                                                    If {
+                                                                        branches: [
+                                                                            IfBranch {
+                                                                                condition: Script(
+                                                                                    [
+                                                                                        ListItem {
+                                                                                            and_or: AndOr {
+                                                                                                first: Pipeline {
+                                                                                                    negated: false,
+                                                                                                    commands: [
+                                                                                                        Simple(
+                                                                                                            SimpleCommand {
+                                                                                                                parts: [
+                                                                                                                    Word(
+                                                                                                                        Word(
+                                                                                                                            [
+                                                                                                                                Literal(
+                                                                                                                                    [
+                                                                                                                                        100,
+                                                                                                                                    ],
+                                                                                                                                ),
+                                                                                                                            ],
+                                                                                                                        ),
+                                                                                                                    ),
+                                                                                                                ],
+                                                                                                            },
+                                                                                                        ),
+                                                                                                    ],
+                                                                                                },
+                                                                                                rest: [],
+                                                                                            },
+                                                                                            separator: Sequential,
+                                                                                        },
+                                                                                    ],
+                                                                                ),
+                                                                                body: Script(
+                                                                                    [
+                                                                                        ListItem {
+                                                                                            and_or: AndOr {
+                                                                                                first: Pipeline {
+                                                                                                    negated: false,
+                                                                                                    commands: [
+                                                                                                        Simple(
+                                                                                                            SimpleCommand {
+                                                                                                                parts: [
+                                                                                                                    Word(
+                                                                                                                        Word(
+                                                                                                                            [
+                                                                                                                                Literal(
+                                                                                                                                    [
+                                                                                                                                        101,
+                                                                                                                                    ],
+                                                                                                                                ),
+                                                                                                                            ],
+                                                                                                                        ),
+                                                                                                                    ),
+                                                                                                                ],
+                                                                                                            },
+                                                                                                        ),
+                                                                                                    ],
+                                                                                                },
+                                                                                                rest: [],
+                                                                                            },
+                                                                                            separator: Sequential,
+                                                                                        },
+                                                                                    ],
+                                                                                ),
+                                                                            },
+                                                                        ],
+                                                                        else_body: None,
+                                                                    },
+                                                                    [],
+                                                                ),
+                                                            ],
+                                                        },
+                                                        rest: [],
+                                                    },
+                                                    separator: Sequential,
+                                                },
+                                            ],
+                                        ),
+                                    },
+                                    IfBranch {
+                                        condition: Script(
+                                            [
+                                                ListItem {
+                                                    and_or: AndOr {
+                                                        first: Pipeline {
+                                                            negated: false,
+                                                            commands: [
+                                                                Simple(
+                                                                    SimpleCommand {
+                                                                        parts: [
+                                                                            Word(
+                                                                                Word(
+                                                                                    [
+                                                                                        Literal(
+                                                                                            [
+                                                                                                102,
+                                                                                            ],
+                                                                                        ),
+                                                                                    ],
+                                                                                ),
+                                                                            ),
+                                                                        ],
+                                                                    },
+                                                                ),
+                                                            ],
+                                                        },
+                                                        rest: [],
+                                                    },
+                                                    separator: Sequential,
+                                                },
+                                            ],
+                                        ),
+                                        body: Script(
+                                            [
+                                                ListItem {
+                                                    and_or: AndOr {
+                                                        first: Pipeline {
+                                                            negated: false,
+                                                            commands: [
+                                                                Simple(
+                                                                    SimpleCommand {
+                                                                        parts: [
+                                                                            Word(
+                                                                                Word(
+                                                                                    [
+                                                                                        Literal(
+                                                                                            [
+                                                                                                103,
+                                                                                            ],
+                                                                                        ),
+                                                                                    ],
+                                                                                ),
+                                                                            ),
+                                                                        ],
+                                                                    },
+                                                                ),
+                                                            ],
+                                                        },
+                                                        rest: [],
+                                                    },
+                                                    separator: Sequential,
+                                                },
+                                            ],
+                                        ),
+                                    },
+                                ],
+                                else_body: Some(
+                                    Script(
+                                        [
+                                            ListItem {
+                                                and_or: AndOr {
+                                                    first: Pipeline {
+                                                        negated: false,
+                                                        commands: [
+                                                            Simple(
+                                                                SimpleCommand {
+                                                                    parts: [
+                                                                        Word(
+                                                                            Word(
+                                                                                [
+                                                                                    Literal(
+                                                                                        [
+                                                                                            104,
+                                                                                        ],
+                                                                                    ),
+                                                                                ],
+                                                                            ),
+                                                                        ),
+                                                                    ],
+                                                                },
+                                                            ),
+                                                        ],
+                                                    },
+                                                    rest: [],
+                                                },
+                                                separator: Sequential,
+                                            },
+                                        ],
+                                    ),
+                                ),
+                            },
+                            [
+                                Redirection {
+                                    fd: None,
+                                    op: Output,
+                                    target: Word(
+                                        [
+                                            Literal(
+                                                [
+                                                    111,
+                                                    117,
+                                                    116,
+                                                ],
+                                            ),
+                                        ],
+                                    ),
+                                },
+                            ],
+                        ),
+                    ],
+                },
+                rest: [],
+            },
+            separator: Sequential,
+        },
+    ],
+)

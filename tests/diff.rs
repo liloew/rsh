@@ -28,7 +28,7 @@ fn m0_external_commands_match_reference_shells() {
     }
     for source in include_str!("diff/m0.sh")
         .lines()
-        .filter(|line| !line.is_empty())
+        .filter(|line| !line.is_empty() && !line.starts_with('#'))
     {
         let actual = run(env!("CARGO_BIN_EXE_rsh"), false, source).unwrap();
         for (shell, posix) in references {
@@ -42,4 +42,90 @@ fn m0_external_commands_match_reference_shells() {
             );
         }
     }
+}
+
+/// M2 compares syntax acceptance only: --dump-ast and shell -n never execute.
+#[test]
+fn parser_syntax_matches_reference_shells() {
+    let references = [("dash", false), ("bash", true)];
+    for (shell, posix) in references {
+        if let Err(error) = run(shell, posix, "") {
+            if error.kind() == std::io::ErrorKind::NotFound {
+                eprintln!("skipping parser differential tests: {shell} is not installed");
+                return;
+            }
+            panic!("cannot run {shell}: {error}");
+        }
+    }
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let mut cases: Vec<(Vec<u8>, bool)> = Vec::new();
+    for (source, accepted) in [
+        (include_str!("diff/parser/valid.sh"), true),
+        (include_str!("diff/parser/invalid.sh"), false),
+    ] {
+        cases.extend(
+            source
+                .lines()
+                .filter(|line| !line.is_empty() && !line.starts_with('#'))
+                .map(|line| (line.as_bytes().to_vec(), accepted)),
+        );
+    }
+    for entry in std::fs::read_dir(root.join("tests/golden/parser")).unwrap() {
+        let path = entry.unwrap().path();
+        if path.extension().is_some_and(|ext| ext == "sh") {
+            cases.push((std::fs::read(path).unwrap(), true));
+        }
+    }
+    for (source, accepted) in cases {
+        let text = std::str::from_utf8(&source).unwrap();
+        let actual = Command::new(env!("CARGO_BIN_EXE_rsh"))
+            .args(["--dump-ast", "-c", text])
+            .env_clear()
+            .env("LC_ALL", "C")
+            .output()
+            .unwrap();
+        assert_eq!(
+            actual.status.success(),
+            accepted,
+            "rsh: {text}: {:?}",
+            actual.stderr
+        );
+        for (shell, posix) in references {
+            let mut reference = Command::new(shell);
+            if posix {
+                reference.arg("--posix");
+            }
+            let expected = reference
+                .args(["-n", "-c", text])
+                .env_clear()
+                .env("PATH", "/usr/bin:/bin")
+                .env("LC_ALL", "C")
+                .output()
+                .unwrap();
+            // Explicitly documented reference-shell disagreements; rsh follows grammar.
+            let reference_accepts = match (shell, text) {
+                ("bash", "for 1; do :; done" | "for 'i'; do :; done") => true,
+                ("dash", "case x in |) ;; esac") => true,
+                _ => accepted,
+            };
+            assert_eq!(
+                expected.status.success(),
+                reference_accepts,
+                "{shell}: {text}: {:?}",
+                expected.stderr
+            );
+            assert!(expected.stdout.is_empty());
+        }
+    }
+}
+
+#[test]
+fn for_newline_semicolon_uses_posix_grammar_when_shells_disagree() {
+    // POSIX 2.10.2: NAME sequential_sep do_group has one separator, not newline + ';'.
+    // dash accepts this extension; bash --posix rejects it. rsh follows POSIX.
+    let source = b"for i\n; do :; done";
+    assert!(matches!(
+        rsh::parser::parse(source),
+        Err(rsh::parser::ParseError::Syntax { .. })
+    ));
 }

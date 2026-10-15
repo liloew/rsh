@@ -83,7 +83,9 @@ brace_group      = "{" compound_list "}" ;
 compound_list    = linebreak term [ separator ] ;
 term             = and_or { separator and_or } ;
 
-for_clause       = "for" NAME linebreak [ "in" { WORD } sequential_sep ] do_group ;
+for_clause       = "for" NAME ( do_group
+                             | sequential_sep do_group
+                             | linebreak "in" { WORD } sequential_sep do_group ) ;
 case_clause      = "case" WORD linebreak "in" linebreak { case_item } "esac" ;
 case_item        = [ "(" ] pattern ")" ( compound_list | linebreak ) [ ";;" linebreak ] ;
 pattern          = WORD { "|" WORD } ;
@@ -211,7 +213,8 @@ Each milestone is done only when its tests pass and `cargo clippy -- -D warnings
   - M0 scope: `-c` accepts literal words separated by spaces/tabs, including non-UTF-8 bytes; empty input succeeds. Quoting, operators, expansion and full shell grammar remain deferred to M1 and later. Spawn errors currently report a diagnostic and status 1; 126/127 classification remains M3 work. Verified by `tests/cli.rs` and `tests/diff.rs`; CI checks Linux and macOS.
 - [x] **M1 Lexer**: all tokens and quoting in section 3 except heredocs; golden token tests.
   - M1 exposes a byte-based lexer with physical token spans and structured, unexpanded words. Substitution bodies remain source bytes for later parsing; reserved words remain WORD tokens. Here-document collection is explicitly TODO(M4). Unit tests, `tests/golden/lexer`, and `fuzz/fuzz_targets/lexer.rs` cover recognition and robustness. The M0 CLI remains unchanged; integration with shell grammar is M2 work.
-- [ ] **M2 Parser**: full grammar in 4.1 minus heredocs and functions; golden AST tests; `Incomplete` vs `Error` distinction.
+- [x] **M2 Parser**: full grammar in 4.1 minus heredocs and functions; golden AST tests; `Incomplete` vs `Error` distinction.
+  - M2 implements recursive descent, ordered simple-command parts, compound commands, contextual reserved words, distinct incomplete/syntax errors, canonical Display and lossless byte serialization. `--dump-ast -c` exposes the AST without execution; ordinary `-c` stays at M0 until M3. Heredocs/functions remain TODO(M4)/TODO(M6). Covered by parser unit/property tests, `tests/golden/parser`, syntax differential tests, and the parser fuzz target.
 - [ ] **M3 Basic execution**: simple commands, PATH lookup, assignments, pipelines, `&&`/`||`/`;`, exit statuses 126/127, `!`.
 - [ ] **M4 Redirections and heredocs**: all redir ops, fd duplication/closing, here-docs (quoted and unquoted, `<<-`).
 - [ ] **M5 Expansion**: tilde, full parameter expansion, command substitution, arithmetic, field splitting, globbing, quote removal; `"$@"` semantics.
@@ -247,3 +250,13 @@ Each milestone is done only when its tests pass and `cargo clippy -- -D warnings
 ## 12. Deliberate deviations from POSIX
 
 - Lexer resource limit: recursive quote/substitution scanning is capped at 64 scanner levels (`lexer::MAX_NESTING`); excess nesting returns `LexError::NestingLimit` rather than risking stack exhaustion. This is an implementation limit, not a syntax rule. Pinned by `lexer::tests::deep_nesting_returns_an_error_without_stack_overflow`.
+
+- Parser resource limit: compound-command nesting is capped at 64 command levels (`parser::MAX_NESTING`), returning `ParseError::NestingLimit`. Lists, AND-OR tails and elif branches use iteration. Pinned by `parser::tests::deep_and_wide_inputs_are_bounded`.
+- M2 grammar clarifications (POSIX behavior, not deviations):
+  - POSIX 2.4 and 2.10.2 rules 1/7: only unquoted words in the appropriate grammar context are reserved; assignment and redirection prefixes do not cause a following word to be reclassified as a compound-command introducer. Quoted assignment names are ordinary words. Tests: `reserved_words_are_contextual`, `assignments_only_before_first_command_word_and_redirections_keep_order`.
+  - POSIX 2.10.2 `for_clause`: both `for i do ...` and `for i; do ...` are valid, as is a newline separator. The earlier section 4.1 shorthand omitted the semicolon form; M2 deliberately corrects that production. A newline followed by another semicolon is invalid (dash accepts it, bash --posix rejects it). Tests: `for_omitted_in_uses_exactly_one_separator_or_none`, `for_newline_semicolon_uses_posix_grammar_when_shells_disagree`.
+  - POSIX 2.10.2 rule 1 and its note permit a closing reserved word after a clearly delimited compound command without an intervening separator, e.g. `if (false) then (echo x) else (echo y) fi`. A simple-command argument `then` stays a word. Test: `boundaries_and_newlines`.
+  - POSIX 2.10.2 rule 4: `esac` ends a case construct only at the start of an unparenthesized pattern list; after `(` or `|` it can be a pattern WORD. Empty case bodies are allowed; only the final item may omit `;;`. Tests: `tests/golden/parser/case.sh`, syntax differential fixtures.
+  - Reference-shell discrepancies are explicit in `tests/diff/parser/invalid.sh` and `tests/diff.rs`: dash accepts a missing first case pattern (`|)`); bash `-n` postpones rejecting invalid/quoted for-loop names until execution. rsh requires the WORD/NAME productions specified by POSIX 2.10.2.
+
+M2 source rendering normalizes optional pattern parentheses, final `;;`, and sequential separators (newline/semicolon) without changing the AST. Background separators remain distinct. `Display` is UTF-8 text; for non-UTF-8 AST data it is a lossy preview. `Script::to_source_bytes()` is the lossless shell-source API and is also covered by byte-input round-trip tests. Expansion/substitution bodies retain their M1 representation and are not evaluated.
