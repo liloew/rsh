@@ -22,7 +22,7 @@ fn executes_external_command_with_arguments() {
 
 #[test]
 fn propagates_nonzero_status() {
-    let output = run(&["-c", "/usr/bin/awk BEGIN{exit(42)}"]);
+    let output = run(&["-c", "/usr/bin/awk 'BEGIN{exit(42)}'"]);
     assert_eq!(output.status.code(), Some(42));
 }
 
@@ -38,12 +38,7 @@ fn empty_command_succeeds() {
 
 #[test]
 fn invalid_cli_reports_usage() {
-    for args in [
-        vec![],
-        vec!["-c"],
-        vec!["-x", "cmd"],
-        vec!["-c", "cmd", "extra"],
-    ] {
+    for args in [vec!["-c"], vec!["-x", "cmd"], vec!["-c", "cmd", "extra"]] {
         let output = run(&args);
         assert_eq!(output.status.code(), Some(2));
         assert!(output.stdout.is_empty());

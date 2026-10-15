@@ -1,14 +1,5 @@
 //! Plain command data (SPEC section 2).
 
-use std::ffi::OsString;
-
-/// Temporary M0 command representation, before the structured shell AST.
-#[derive(Debug)]
-pub struct ExternalCommand {
-    pub program: OsString,
-    pub args: Vec<OsString>,
-}
-
 /// Unexpanded lexical word. Bytes and quote boundaries survive tokenization.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Word(pub Vec<WordPart>);

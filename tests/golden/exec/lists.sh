@@ -1,0 +1,6 @@
+false && printf 'bad\n'
+true || printf 'bad\n'
+false || printf 'or\n'
+true && printf 'and\n'
+true || false && printf 'left\n'
+false && true || printf 'also left\n'

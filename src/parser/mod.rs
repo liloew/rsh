@@ -442,24 +442,5 @@ fn assignment(word: &Word) -> Option<Assignment> {
         value: Word(value),
     })
 }
-// M0 execution bootstrap; retained until M3 wires execution to the new AST.
-
-use std::ffi::{OsStr, OsString};
-use std::os::unix::ffi::{OsStrExt, OsStringExt};
-
-/// M0 accepts only literal words separated by spaces or tabs.
-/// The M2 parser is available separately; execution integration is deferred to M3.
-pub fn parse_m0(source: &OsStr) -> Option<ExternalCommand> {
-    let mut words = source
-        .as_bytes()
-        .split(|byte| matches!(byte, b' ' | b'\t'))
-        .filter(|word| !word.is_empty())
-        .map(|word| OsString::from_vec(word.to_vec()));
-    Some(ExternalCommand {
-        program: words.next()?,
-        args: words.collect(),
-    })
-}
-
 #[cfg(test)]
 mod tests;
