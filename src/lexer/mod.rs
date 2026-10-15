@@ -680,7 +680,31 @@ fn is_boundary(byte: u8) -> bool {
     )
 }
 
-fn here_parts(input: &[u8], depth: usize) -> Result<Vec<WordPart>, LexError> {
+/// Lex an expansion operand as word parts; shell operators are literal here.
+pub(crate) fn expansion_parts(input: &[u8], double: bool) -> Result<Vec<WordPart>, LexError> {
+    let mut lexer = Lexer {
+        input,
+        position: Position {
+            offset: 0,
+            line: 1,
+            column: 1,
+        },
+    };
+    let mut parts = Vec::new();
+    while let Some(b) = lexer.peek() {
+        if !double && is_boundary(b) || double && b == b'"' {
+            lexer.bump();
+            if !double {
+                Lexer::literal(&mut parts, b);
+            }
+        } else {
+            parts.extend(lexer.parts(double, 0)?);
+        }
+    }
+    Ok(parts)
+}
+
+pub(crate) fn here_parts(input: &[u8], depth: usize) -> Result<Vec<WordPart>, LexError> {
     let mut lexer = Lexer {
         input,
         position: Position {

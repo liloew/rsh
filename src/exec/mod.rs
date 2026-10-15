@@ -1,4 +1,4 @@
-//! M3/M4 execution: ordered redirections and grouping, without M5 expansions or M6 control flow.
+//! AST execution with M5 expansion and ordered redirections; control flow remains M6.
 use crate::ast::*;
 use crate::builtins::{self, Builtin, Outcome};
 use crate::env::ShellEnv;
@@ -93,25 +93,45 @@ impl Shell {
             }
         }
     }
-    fn simple(&self, command: &Command) -> Result<Simple, ExecError> {
+    fn simple(&mut self, command: &Command) -> Result<Simple, ExecError> {
         let Command::Simple(simple) = command else {
             return Err(ExecError::Unsupported("compound execution is TODO(M6)"));
         };
         let mut words = Vec::new();
         let mut assignments = Vec::new();
-        let mut assigned = self.env.clone();
+
         let mut redirs = Vec::new();
         for part in &simple.parts {
             match part {
-                SimplePart::Word(word) => words.push(crate::expand::basic_word(word, &self.env)?),
-                SimplePart::Assignment(assignment) => {
-                    let value = crate::expand::basic_word(&assignment.value, &assigned)?;
-                    assigned.set(assignment.name.clone(), value.clone());
-                    assignments.push((assignment.name.clone(), value));
+                SimplePart::Word(word) => {
+                    words.extend(self.expand(word, crate::expand::Mode::Argument)?)
                 }
-                SimplePart::Redirection(redirection) => redirs.push(redirection.clone()),
+                SimplePart::Assignment(_) => {}
+                SimplePart::Redirection(redirection) => {
+                    redirs.push(self.expand_redirect(redirection)?)
+                }
             }
         }
+        let mut saved = Vec::new();
+        let result = (|| -> Result<(), ExecError> {
+            for part in &simple.parts {
+                if let SimplePart::Assignment(a) = part {
+                    let value = self.expand_scalar(&a.value, crate::expand::Mode::Assignment)?;
+                    saved.push((a.name.clone(), self.env.variables.get(&a.name).cloned()));
+                    self.env.set(a.name.clone(), value.clone());
+                    assignments.push((a.name.clone(), value));
+                }
+            }
+            Ok(())
+        })();
+        for (name, value) in saved.into_iter().rev() {
+            if let Some(v) = value {
+                self.env.variables.insert(name, v);
+            } else {
+                self.env.variables.remove(&name);
+            }
+        }
+        result?;
         let name = words.first().map(Vec::as_slice).unwrap_or_default();
         let special = builtins::special(name);
         // Dispatch order: special builtin -> TODO(M6) function -> regular -> external.
@@ -140,7 +160,10 @@ impl Shell {
                 &mut self.env,
             )
         } else {
-            Outcome::default()
+            Outcome {
+                status: self.env.substitution_status.unwrap_or(0),
+                ..Outcome::default()
+            }
         };
         if !simple.special && !simple.words.is_empty() {
             for (name, value) in saved {
@@ -201,7 +224,11 @@ impl Shell {
             let CompoundCommand::Brace(body) = compound.as_ref() else {
                 return Err(ExecError::Unsupported("compound command"));
             };
-            let plan = crate::redirect::prepare(redirs, &self.env);
+            let redirs = redirs
+                .iter()
+                .map(|r| self.expand_redirect(r))
+                .collect::<Result<Vec<_>, _>>()?;
+            let plan = crate::redirect::prepare(&redirs, &self.env);
             let guard = sys::FdGuard::save(&plan, self.fd_floor)?;
             let status = if let Err(error) = plan.apply() {
                 plan.report(error);
@@ -212,6 +239,7 @@ impl Shell {
             drop(guard);
             status
         } else if let [Command::Simple(command)] = pipeline.commands.as_slice() {
+            self.env.substitution_status = None;
             let simple = self.simple(&Command::Simple(command.clone()))?;
             if simple.words.is_empty() || simple.builtin.is_some() {
                 self.redirected_builtin(&simple)?
@@ -290,32 +318,41 @@ impl Shell {
         Ok(last)
     }
     fn prepare_command(
-        &self,
+        &mut self,
         command: &Command,
         pipe_in: bool,
         pipe_out: bool,
     ) -> Result<PreparedProcess, ExecError> {
-        match command {
-            Command::Simple(_) => self.prepare(&self.simple(command)?),
+        let command = match command {
+            Command::Simple(_) => command.clone(),
             Command::Compound(compound, redirs) => {
-                let script = match compound.as_ref() {
-                    CompoundCommand::Brace(body) | CompoundCommand::Subshell(body) => body,
+                let body = match compound.as_ref() {
+                    CompoundCommand::Brace(body) | CompoundCommand::Subshell(body) => body.clone(),
                     _ => return Err(ExecError::Unsupported("control flow is TODO(M6)")),
                 };
-                let plan = crate::redirect::prepare(redirs, &self.env);
-                let mut closed = sys::closed_stdio();
-                if pipe_in {
-                    closed &= !1;
-                }
-                if pipe_out {
-                    closed &= !2;
-                }
-                let closed = plan.closed_stdio(closed);
-                Ok(self
-                    .worker_process(script, false, closed, plan.floor())?
-                    .with_redirects(plan, 1))
+                Command::Compound(Box::new(CompoundCommand::Brace(body)), redirs.clone())
             }
+        };
+        // Expansions and their variable side effects belong to each pipeline/subshell
+        // process. Re-exec before interpreting Rust, keeping the fork path signal-safe.
+        let script = Script(vec![ListItem {
+            separator: Separator::Sequential,
+            and_or: AndOr {
+                first: Pipeline {
+                    negated: false,
+                    commands: vec![command],
+                },
+                rest: Vec::new(),
+            },
+        }]);
+        let mut closed = sys::closed_stdio();
+        if pipe_in {
+            closed &= !1;
         }
+        if pipe_out {
+            closed &= !2;
+        }
+        self.worker_process(&script, false, closed, 0)
     }
     fn launch_background(&mut self, list: &AndOr) -> Result<u8, ExecError> {
         // Re-exec is essential: a post-fork child must never run the Rust interpreter.
@@ -324,14 +361,16 @@ impl Shell {
             separator: Separator::Sequential,
         }]);
         let process = self.worker_process(&script, true, sys::closed_stdio() & !1, 0)?;
-        self.background.extend(sys::spawn_pipeline(
+        let children = sys::spawn_pipeline(
             &[process],
             SpawnOptions {
                 detached: true,
                 null_stdin: true,
                 ignore_int_quit: true,
             },
-        )?);
+        )?;
+        self.env.last_background = children.last().map(Child::pid);
+        self.background.extend(children);
         Ok(0)
     }
     fn worker_process(
@@ -341,29 +380,22 @@ impl Shell {
         closed: u8,
         reserved_floor: i32,
     ) -> Result<PreparedProcess, ExecError> {
-        let source = sys::here_input(
-            &script.to_source_bytes(),
-            crate::redirect::source_floor(script, &self.env)
-                .max(self.fd_floor)
-                .max(reserved_floor),
-        )?;
-        let source_arg = format!("@{}", source.as_raw_fd()).into_bytes();
-        let mut words = vec![
-            self.executable.as_os_str().as_bytes().to_vec(),
-            if background {
-                b"--m3-worker".to_vec()
-            } else {
-                b"--subshell-worker".to_vec()
-            },
-            source_arg,
-            self.env.last_status.to_string().into_bytes(),
-            if self.env.noclobber {
-                b"n=1".to_vec()
-            } else {
-                b"n=0".to_vec()
-            },
-        ];
+        let mut words = vec![if self.env.noclobber {
+            b"n=1".to_vec()
+        } else {
+            b"n=0".to_vec()
+        }];
         words.push(format!("c={closed}").into_bytes());
+        words.push([b"d=".as_slice(), self.env.cwd.as_os_str().as_bytes()].concat());
+        words.push(format!("g={}", u8::from(self.env.noglob)).into_bytes());
+        words.push(format!("p={}", self.env.shell_pid).into_bytes());
+        words.push([b"z=".as_slice(), self.env.arg0.as_slice()].concat());
+        if let Some(pid) = self.env.last_background {
+            words.push(format!("b={pid}").into_bytes());
+        }
+        for arg in &self.env.positional {
+            words.push([b"a=".as_slice(), arg.as_slice()].concat());
+        }
         for (name, var) in &self.env.variables {
             let mut encoded = vec![if var.value.is_none() {
                 b'u'
@@ -379,15 +411,108 @@ impl Shell {
             }
             words.push(encoded);
         }
+        words.push(script.to_source_bytes());
+        let payload = crate::env::encode_snapshot(&words);
+        let source = sys::here_input(
+            &payload,
+            crate::redirect::source_floor(script, &self.env)
+                .max(self.fd_floor)
+                .max(reserved_floor),
+        )?;
+        let args = vec![
+            self.executable.as_os_str().as_bytes().to_vec(),
+            if background {
+                b"--m3-worker".to_vec()
+            } else {
+                b"--subshell-worker".to_vec()
+            },
+            format!("@{}", source.as_raw_fd()).into_bytes(),
+            self.env.last_status.to_string().into_bytes(),
+        ];
         Ok(
-            PreparedProcess::external(&words, &self.env.exported(), &self.env.cwd, None)?
-                .with_redirects(
-                    sys::FdPlan {
-                        ops: vec![sys::FdOp::Inherit { source }],
-                    },
-                    1,
-                ),
+            PreparedProcess::external(&args, &[], &self.env.cwd, None)?.with_redirects(
+                sys::FdPlan {
+                    ops: vec![sys::FdOp::Inherit { source }],
+                },
+                1,
+            ),
         )
+    }
+    fn expand(
+        &mut self,
+        word: &Word,
+        mode: crate::expand::Mode,
+    ) -> Result<Vec<Vec<u8>>, ExecError> {
+        let executable = self.executable.clone();
+        let floor = self.fd_floor;
+        let result = crate::expand::word(
+            word,
+            &mut self.env,
+            &mut |source, env| {
+                let mut shell = Shell::new(env.clone(), executable.clone());
+                shell.fd_floor = floor;
+                shell
+                    .substitute(source)
+                    .map_err(|e| crate::expand::ExpandError::new(e.to_string()))
+            },
+            mode,
+        );
+        if result.is_err() {
+            self.env.exit_requested = Some(2);
+        }
+        Ok(result?)
+    }
+    fn expand_scalar(
+        &mut self,
+        word: &Word,
+        mode: crate::expand::Mode,
+    ) -> Result<Vec<u8>, ExecError> {
+        Ok(self.expand(word, mode)?.join(b" ".as_slice()))
+    }
+    fn expand_redirect(&mut self, redir: &Redirection) -> Result<Redirection, ExecError> {
+        let mut r = redir.clone();
+        if let RedirOp::HereDoc(doc) = &mut r.op {
+            if !doc.quoted {
+                doc.raw =
+                    self.expand_scalar(&Word(doc.parts.clone()), crate::expand::Mode::HereDoc)?;
+                doc.quoted = true;
+            }
+        } else {
+            r.target = Word(vec![WordPart::Literal(
+                self.expand_scalar(&r.target, crate::expand::Mode::Scalar)?,
+            )]);
+        }
+        Ok(r)
+    }
+    fn substitute(&mut self, source: &[u8]) -> Result<(Vec<u8>, u8), ExecError> {
+        use std::io::{Read, Seek};
+        let script = crate::parser::parse(source)
+            .map_err(|_| ExecError::Unsupported("invalid command substitution"))?;
+        if script.0.is_empty() {
+            return Ok((Vec::new(), 0));
+        }
+        let floor = crate::redirect::source_floor(&script, &self.env).max(self.fd_floor);
+        let mut file = sys::capture_file(floor)?;
+        let plan = sys::FdPlan {
+            ops: vec![sys::FdOp::Dup {
+                fd: 1,
+                source: file.as_raw_fd(),
+                context: b"command substitution".to_vec(),
+            }],
+        };
+        let process = self
+            .worker_process(
+                &script,
+                false,
+                sys::closed_stdio() & !2,
+                floor.max(file.as_raw_fd().saturating_add(1)),
+            )?
+            .with_redirects(plan, 1);
+        let status = self.wait_processes(vec![process])?;
+        file.rewind()?;
+        let mut out = Vec::new();
+        file.read_to_end(&mut out)?;
+        Ok((out, status))
     }
     pub fn reap_background(&mut self) {
         self.background

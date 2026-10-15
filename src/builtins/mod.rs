@@ -1,10 +1,12 @@
-//! M3 builtins and M4 redirection-only exec. Remaining builtin behavior is TODO(M7).
+//! Minimal execution builtins, redirection-only exec and M5 set options/positionals.
+//! Remaining builtin behavior is TODO(M7).
 use crate::env::{ShellEnv, valid_name};
 use std::os::unix::ffi::OsStrExt;
 use std::path::{Component, Path, PathBuf};
 
 #[derive(Debug, Clone, Copy)]
 pub enum Builtin {
+    Set,
     Exec,
     Colon,
     Exit,
@@ -17,6 +19,7 @@ pub enum Builtin {
 
 pub fn special(name: &[u8]) -> Option<Builtin> {
     match name {
+        b"set" => Some(Builtin::Set),
         b"exec" => Some(Builtin::Exec),
         b":" => Some(Builtin::Colon),
         b"exit" => Some(Builtin::Exit),
@@ -57,6 +60,33 @@ impl Outcome {
 
 pub fn run(builtin: Builtin, args: &[Vec<u8>], env: &mut ShellEnv) -> Outcome {
     match builtin {
+        Builtin::Set => {
+            let mut i = 0;
+            while let Some(arg) = args.get(i) {
+                if arg == b"--" {
+                    i += 1;
+                    env.positional = args.get(i..).unwrap_or_default().to_vec();
+                    return Outcome::default();
+                }
+                if arg == b"-f" || arg == b"+f" {
+                    env.noglob = arg == b"-f";
+                    i += 1;
+                } else if arg == b"-C" || arg == b"+C" {
+                    env.noclobber = arg == b"-C";
+                    i += 1;
+                } else if arg.starts_with(b"-") || arg.starts_with(b"+") {
+                    return Outcome::error(
+                        b"set",
+                        b"unsupported option (remaining options TODO(M7))",
+                        2,
+                    );
+                } else {
+                    env.positional = args.get(i..).unwrap_or_default().to_vec();
+                    return Outcome::default();
+                }
+            }
+            Outcome::default()
+        }
         Builtin::Exec => {
             if args.is_empty() {
                 Outcome::default()

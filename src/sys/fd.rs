@@ -397,3 +397,63 @@ pub fn close_stdio(mask: u8) {
         }
     }
 }
+
+/// Seekable anonymous capture avoids pipe-capacity deadlocks while a worker runs.
+pub fn capture_file(floor: i32) -> io::Result<std::fs::File> {
+    let fd = here_input(&[0; 513], floor)?;
+    let mut file = std::fs::File::from(fd);
+    file.set_len(0)?;
+    file.rewind()?;
+    Ok(file)
+}
+/// Reentrant passwd lookup, copying the result before releasing its backing buffer.
+pub fn user_home(user: Option<&[u8]>) -> Option<Vec<u8>> {
+    let name = match user {
+        Some(u) => Some(CString::new(u).ok()?),
+        None => None,
+    };
+    let mut size = 16384;
+    loop {
+        let mut buffer = vec![0u8; size];
+        let mut record = std::mem::MaybeUninit::<libc::passwd>::uninit();
+        let mut result = std::ptr::null_mut();
+        // SAFETY: record/result and buffer are valid writable storage. Name, if present,
+        // is NUL-terminated. The reentrant API retains no pointers after returning.
+        let error = unsafe {
+            if let Some(name) = &name {
+                libc::getpwnam_r(
+                    name.as_ptr(),
+                    record.as_mut_ptr(),
+                    buffer.as_mut_ptr().cast(),
+                    buffer.len(),
+                    &mut result,
+                )
+            } else {
+                libc::getpwuid_r(
+                    libc::getuid(),
+                    record.as_mut_ptr(),
+                    buffer.as_mut_ptr().cast(),
+                    buffer.len(),
+                    &mut result,
+                )
+            }
+        };
+        if error == libc::ERANGE && size < 1048576 {
+            size *= 2;
+            continue;
+        }
+        if error != 0 || result.is_null() {
+            return None;
+        }
+        // SAFETY: successful lookup initialized record; pw_dir points into buffer and
+        // remains valid until the owned byte copy is complete.
+        return unsafe {
+            let record = record.assume_init();
+            if record.pw_dir.is_null() {
+                None
+            } else {
+                Some(std::ffi::CStr::from_ptr(record.pw_dir).to_bytes().to_vec())
+            }
+        };
+    }
+}

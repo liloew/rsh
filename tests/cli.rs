@@ -38,7 +38,7 @@ fn empty_command_succeeds() {
 
 #[test]
 fn invalid_cli_reports_usage() {
-    for args in [vec!["-c"], vec!["-x", "cmd"], vec!["-c", "cmd", "extra"]] {
+    for args in [vec!["-c"], vec!["-x", "cmd"]] {
         let output = run(&args);
         assert_eq!(output.status.code(), Some(2));
         assert!(output.stdout.is_empty());
@@ -70,4 +70,11 @@ fn preserves_non_utf8_arguments() {
         .unwrap();
     assert!(output.status.success());
     assert_eq!(output.stdout, [0xff]);
+}
+
+#[test]
+fn command_mode_positional_arguments() {
+    let out = run(&["-c", "printf '%s\\n' \"$0\" \"$1\" \"$#\"", "name", "value"]);
+    assert!(out.status.success());
+    assert_eq!(out.stdout, b"name\nvalue\n1\n");
 }

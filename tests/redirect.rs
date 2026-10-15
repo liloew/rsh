@@ -195,12 +195,23 @@ fn large_heredocs_and_nested_worker_sources_do_not_block() {
     }));
 }
 #[test]
-fn nested_substitution_heredoc_is_syntax_only_until_m5() {
+fn nested_substitution_heredoc_syntax_and_runtime() {
     let source = "echo \"$(cat <<END\n) literal punctuation\nEND\n)\"\n";
     let ast = rsh::parser::parse(source.as_bytes()).unwrap();
     assert_eq!(rsh::parser::parse(ast.to_string().as_bytes()).unwrap(), ast);
     let dir = TempDir::new();
     fixture(&dir);
+    let runtime = source.replace(") literal punctuation", "heredoc");
+    for program in [env!("CARGO_BIN_EXE_rsh"), "dash", "bash"] {
+        let mut c = dir.command(program);
+        if program == "bash" {
+            c.arg("--posix");
+        }
+        c.args(["-c", &runtime]);
+        let (out, _) = capture(c);
+        assert!(out.status.success(), "{program}: {:?}", out.stderr);
+        assert_eq!(out.stdout, b"heredoc\n");
+    }
     for shell in ["dash", "bash"] {
         let mut cmd = dir.command(shell);
         if shell == "bash" {

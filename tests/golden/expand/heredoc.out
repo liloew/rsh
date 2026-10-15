@@ -1,0 +1,2 @@
+a b* default 5 sub "literal" $x
+$x $(false) $((1/0))

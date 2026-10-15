@@ -18,6 +18,12 @@ pub struct ShellEnv {
     pub exit_requested: Option<u8>,
     /// Placeholder for set -C (the option builtin belongs to M7).
     pub noclobber: bool,
+    pub noglob: bool,
+    pub positional: Vec<Vec<u8>>,
+    pub arg0: Vec<u8>,
+    pub shell_pid: u32,
+    pub last_background: Option<i32>,
+    pub substitution_status: Option<u8>,
 }
 
 impl ShellEnv {
@@ -29,6 +35,12 @@ impl ShellEnv {
             last_status: 0,
             exit_requested: None,
             noclobber: false,
+            noglob: false,
+            positional: Vec::new(),
+            arg0: b"rsh".to_vec(),
+            shell_pid: std::process::id(),
+            last_background: None,
+            substitution_status: None,
         };
         for (key, value) in std::env::vars_os() {
             env.variables.insert(
@@ -93,6 +105,36 @@ pub fn valid_name(name: &[u8]) -> bool {
         && name.iter().all(|b| b.is_ascii_alphanumeric() || *b == b'_')
 }
 
+/// Length-delimited internal worker state, including arbitrary byte values.
+pub fn encode_snapshot(fields: &[Vec<u8>]) -> Vec<u8> {
+    let mut out = Vec::new();
+    for field in fields {
+        out.extend((field.len() as u64).to_le_bytes());
+        out.extend(field);
+    }
+    out
+}
+pub fn decode_snapshot(mut bytes: &[u8]) -> std::io::Result<Vec<Vec<u8>>> {
+    let mut out = Vec::new();
+    while !bytes.is_empty() {
+        let Some((len, rest)) = bytes.split_at_checked(8) else {
+            return Err(std::io::Error::other("truncated worker snapshot"));
+        };
+        let len = u64::from_le_bytes(
+            len.try_into()
+                .map_err(|_| std::io::Error::other("invalid snapshot length"))?,
+        );
+        let len =
+            usize::try_from(len).map_err(|_| std::io::Error::other("snapshot length overflow"))?;
+        let Some((field, rest)) = rest.split_at_checked(len) else {
+            return Err(std::io::Error::other("truncated worker field"));
+        };
+        out.push(field.to_vec());
+        bytes = rest;
+    }
+    Ok(out)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -104,6 +146,12 @@ mod tests {
             last_status: 0,
             exit_requested: None,
             noclobber: false,
+            noglob: false,
+            positional: Vec::new(),
+            arg0: b"rsh".to_vec(),
+            shell_pid: std::process::id(),
+            last_background: None,
+            substitution_status: None,
         };
         env.mark_exported(b"X".to_vec());
         assert!(env.exported().is_empty());

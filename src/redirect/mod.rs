@@ -68,7 +68,6 @@ pub fn prepare(redirs: &[Redirection], env: &ShellEnv) -> FdPlan {
             default
         };
         if let RedirOp::HereDoc(document) = &redir.op {
-            // TODO(M5): evaluate document.parts only when !document.quoted.
             match sys::here_input(&document.raw, floor) {
                 Ok(source) => plan.ops.push(FdOp::Here { fd, source }),
                 Err(error) => plan.ops.push(fail(

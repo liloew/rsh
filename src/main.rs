@@ -25,31 +25,33 @@ fn run() -> std::io::Result<u8> {
     let dump = first.as_deref() == Some(OsStr::new("--dump-ast"));
     let first = if dump { args.next() } else { first };
     let mut source = Vec::new();
+    let mut env = ShellEnv::inherited()?;
+    if let Some(arg0) = std::env::args_os().next() {
+        env.arg0 = arg0.as_bytes().to_vec();
+    }
     match first.as_deref() {
         Some(option) if option == "-c" => {
             let Some(command) = args.next() else {
                 return Ok(usage());
             };
-            if args.next().is_some() {
-                return Ok(usage());
+            if let Some(arg0) = args.next() {
+                env.arg0 = arg0.as_bytes().to_vec();
             }
+            env.positional = args.map(|a| a.as_bytes().to_vec()).collect();
             source.extend_from_slice(command.as_bytes());
         }
         option if option.is_none() || option == Some(OsStr::new("-s")) => {
-            if args.next().is_some() {
-                return Ok(usage());
-            }
+            env.positional = args.map(|a| a.as_bytes().to_vec()).collect();
             std::io::stdin().read_to_end(&mut source)?;
         }
         Some(path) if !path.as_bytes().starts_with(b"-") => {
-            if args.next().is_some() {
-                return Ok(usage());
-            }
+            env.arg0 = path.as_bytes().to_vec();
+            env.positional = args.map(|a| a.as_bytes().to_vec()).collect();
             source = std::fs::read(path)?;
         }
         _ => return Ok(usage()),
     }
-    evaluate(&source, dump, ShellEnv::inherited()?, false)
+    evaluate(&source, dump, env, false)
 }
 fn usage() -> u8 {
     eprintln!("rsh: arguments: usage: rsh [--dump-ast] [-c command | -s | script]");
@@ -78,11 +80,55 @@ fn worker(args: Vec<OsString>, background: bool) -> std::io::Result<u8> {
     let Ok(status) = status.to_string_lossy().parse::<u8>() else {
         return Ok(usage());
     };
+    let Some(fd) = source
+        .as_bytes()
+        .strip_prefix(b"@")
+        .and_then(|v| std::str::from_utf8(v).ok())
+        .and_then(|v| v.parse::<i32>().ok())
+    else {
+        return Ok(usage());
+    };
+    let payload = rsh::sys::read_worker_source(fd)?;
+    let mut snapshot = rsh::env::decode_snapshot(&payload)?;
+    let Some(source) = snapshot.pop() else {
+        return Ok(usage());
+    };
     let mut env = ShellEnv::inherited()?;
     env.variables.clear();
     env.last_status = status;
     let mut closed = 0;
-    for arg in args.iter().skip(2) {
+    for arg in snapshot.iter().map(|v| OsStr::from_bytes(v)) {
+        let bytes = arg.as_bytes();
+        if let Some(v) = bytes.strip_prefix(b"d=") {
+            let p = std::path::PathBuf::from(OsStr::from_bytes(v));
+            if !p.is_absolute() {
+                return Ok(usage());
+            }
+            env.cwd = p;
+            continue;
+        }
+        if let Some(v) = bytes.strip_prefix(b"a=") {
+            env.positional.push(v.to_vec());
+            continue;
+        }
+        if let Some(v) = bytes.strip_prefix(b"z=") {
+            env.arg0 = v.to_vec();
+            continue;
+        }
+        if let Some(v) = bytes.strip_prefix(b"g=") {
+            env.noglob = v == b"1";
+            continue;
+        }
+        if let Some(v) = bytes.strip_prefix(b"p=") {
+            if let Some(n) = std::str::from_utf8(v).ok().and_then(|s| s.parse().ok()) {
+                env.shell_pid = n;
+            }
+            continue;
+        }
+        if let Some(v) = bytes.strip_prefix(b"b=") {
+            env.last_background = std::str::from_utf8(v).ok().and_then(|s| s.parse().ok());
+            continue;
+        }
         if let Some(value) = arg.as_bytes().strip_prefix(b"c=") {
             let Some(mask) = std::str::from_utf8(value)
                 .ok()
@@ -118,17 +164,6 @@ fn worker(args: Vec<OsString>, background: bool) -> std::io::Result<u8> {
         };
         env.variables.insert(name, var);
     }
-    let source = if let Some(bytes) = source.as_bytes().strip_prefix(b"@") {
-        let Some(fd) = std::str::from_utf8(bytes)
-            .ok()
-            .and_then(|s| s.parse::<i32>().ok())
-        else {
-            return Ok(usage());
-        };
-        rsh::sys::read_worker_source(fd)?
-    } else {
-        source.as_bytes().to_vec()
-    };
     rsh::sys::close_stdio(closed);
     evaluate(&source, false, env, background)
 }

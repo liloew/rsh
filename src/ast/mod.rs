@@ -29,7 +29,7 @@ pub enum ParamExpr {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CommandSub {
     pub style: CommandSubStyle,
-    /// Source between delimiters; a future parser will consume these bytes.
+    /// Source between delimiters, parsed when command substitution executes.
     pub source: Vec<u8>,
 }
 
@@ -126,7 +126,7 @@ pub enum RedirOp {
     Clobber,
     HereDoc(Box<HereDoc>),
 }
-/// The lexer collects bytes; M5 will evaluate `parts` for unquoted delimiters.
+/// The lexer collects bytes; execution expands `parts` for unquoted delimiters.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HereDoc {
     pub delimiter: Vec<u8>,

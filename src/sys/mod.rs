@@ -14,8 +14,8 @@ pub enum PrepareError {
 
 mod fd;
 pub use fd::{
-    FdGuard, FdOp, FdPlan, OpenMode, close_stdio, closed_stdio, here_input, read_worker_source,
-    write_fd,
+    FdGuard, FdOp, FdPlan, OpenMode, capture_file, close_stdio, closed_stdio, here_input,
+    read_worker_source, user_home, write_fd,
 };
 
 pub struct PreparedProcess {

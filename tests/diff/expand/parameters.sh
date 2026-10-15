@@ -1,0 +1,6 @@
+printf '<%s>\n' "${v-unset}" "${v:-null}" "${v+yes}" "${v:+yes}"
+v=; printf '<%s>\n' "${v-unset}" "${v:-null}" "${v+yes}" "${v:+yes}"
+v=value; printf '<%s>\n' "${v-unset}" "${v:-null}" "${v+yes}" "${v:+yes}" "${#v}"
+printf '<%s>\n' "${a=one}" "${b:=two}" "$a" "$b" "${z:-${q:-nested}}"
+: "${v:?unused}" "${v?unused}"
+printf '<%s>\n' ${missing:-x y} "${missing:-x y}" ${missing:-"x y"} "${missing:-'x y'}"
