@@ -1,0 +1,14 @@
+1:1-2:1 IoNumber([50])
+2:1-2:2 Operator(Greater)
+2:2-2:6 Word(Word([Literal([102, 105, 108, 101])]))
+2:7-3:2 Operator(AndIf)
+3:3-3:7 Word(Word([Literal([101, 99, 104, 111])]))
+3:8-4:2 Word(Word([Literal([97, 98])]))
+4:3-5:3 Word(Word([Param(Name([110, 97, 109, 101]))]))
+5:3-6:1 Newline
+6:1-7:9 Word(Word([SingleQuoted([107, 101, 101, 112, 92, 10, 110, 101, 119, 108, 105, 110, 101])]))
+7:10-8:7 Word(Word([DoubleQuoted([Literal([106, 111, 105, 110, 108, 105, 110, 101, 115])])]))
+8:7-9:1 Newline
+9:11-10:1 Newline
+10:1-10:5 Word(Word([Literal([110, 101, 120, 116])]))
+10:5-11:1 Newline

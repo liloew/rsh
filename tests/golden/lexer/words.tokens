@@ -1,0 +1,21 @@
+1:1-1:3 Word(Word([Literal([105, 102])]))
+1:4-1:8 Word(Word([Literal([116, 104, 101, 110])]))
+1:9-1:10 Word(Word([Literal([123])]))
+1:11-1:12 Word(Word([Literal([125])]))
+1:13-1:14 Word(Word([Literal([33])]))
+1:15-1:23 Word(Word([Literal([102, 117, 110, 99, 116, 105, 111, 110])]))
+1:24-1:27 Word(Word([Literal([97, 35, 98])]))
+1:37-2:1 Newline
+2:1-2:5 Word(Word([SingleQuoted([36, 120])]))
+2:6-2:24 Word(Word([DoubleQuoted([Literal([97, 92, 113]), Escaped(36), Escaped(96), Escaped(34), Escaped(92), Param(Name([110, 97, 109, 101]))])]))
+2:25-2:29 Word(Word([Literal([97]), Escaped(32), Literal([98])]))
+2:30-2:32 Word(Word([SingleQuoted([])]))
+2:33-2:35 Word(Word([DoubleQuoted([])]))
+2:35-3:1 Newline
+3:1-3:6 Word(Word([Tilde(None), Literal([47, 115, 114, 99])]))
+3:7-3:17 Word(Word([Tilde(Some([117, 115, 101, 114])), Literal([47, 102, 105, 108, 101])]))
+3:18-3:25 Word(Word([Glob(Star), Glob(Question), Glob(OpenBracket), Literal([97, 98, 99, 93])]))
+3:26-3:28 Word(Word([Escaped(42)]))
+3:29-3:32 Word(Word([SingleQuoted([126])]))
+3:33-3:36 Word(Word([DoubleQuoted([Literal([63])])]))
+3:36-4:1 Newline

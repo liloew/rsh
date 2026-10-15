@@ -1,14 +1,4 @@
-mod ast;
-mod builtins;
-mod env;
-mod exec;
-mod expand;
-mod interactive;
-mod jobs;
-mod lexer;
-mod parser;
-mod redirect;
-mod sys;
+use rsh::{exec, parser};
 
 use std::process::ExitCode;
 

@@ -209,7 +209,8 @@ Each milestone is done only when its tests pass and `cargo clippy -- -D warnings
 
 - [x] **M0 Skeleton**: crate layout, CI (`fmt`, `clippy`, `test`), `-c 'cmd'` runs a single external command, exit status propagated.
   - M0 scope: `-c` accepts literal words separated by spaces/tabs, including non-UTF-8 bytes; empty input succeeds. Quoting, operators, expansion and full shell grammar remain deferred to M1 and later. Spawn errors currently report a diagnostic and status 1; 126/127 classification remains M3 work. Verified by `tests/cli.rs` and `tests/diff.rs`; CI checks Linux and macOS.
-- [ ] **M1 Lexer**: all tokens and quoting in section 3 except heredocs; golden token tests.
+- [x] **M1 Lexer**: all tokens and quoting in section 3 except heredocs; golden token tests.
+  - M1 exposes a byte-based lexer with physical token spans and structured, unexpanded words. Substitution bodies remain source bytes for later parsing; reserved words remain WORD tokens. Here-document collection is explicitly TODO(M4). Unit tests, `tests/golden/lexer`, and `fuzz/fuzz_targets/lexer.rs` cover recognition and robustness. The M0 CLI remains unchanged; integration with shell grammar is M2 work.
 - [ ] **M2 Parser**: full grammar in 4.1 minus heredocs and functions; golden AST tests; `Incomplete` vs `Error` distinction.
 - [ ] **M3 Basic execution**: simple commands, PATH lookup, assignments, pipelines, `&&`/`||`/`;`, exit statuses 126/127, `!`.
 - [ ] **M4 Redirections and heredocs**: all redir ops, fd duplication/closing, here-docs (quoted and unquoted, `<<-`).
@@ -245,4 +246,4 @@ Each milestone is done only when its tests pass and `cargo clippy -- -D warnings
 
 ## 12. Deliberate deviations from POSIX
 
-None yet. Record each as: *what, why, and the test that pins it*.
+- Lexer resource limit: recursive quote/substitution scanning is capped at 64 scanner levels (`lexer::MAX_NESTING`); excess nesting returns `LexError::NestingLimit` rather than risking stack exhaustion. This is an implementation limit, not a syntax rule. Pinned by `lexer::tests::deep_nesting_returns_an_error_without_stack_overflow`.

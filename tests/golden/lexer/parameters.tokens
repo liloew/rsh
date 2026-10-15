@@ -1,0 +1,7 @@
+1:1-1:12 Word(Word([DoubleQuoted([Param(Braced([120, 58, 45, 39])), Literal([39, 125])])]))
+1:13-1:23 Word(Word([DoubleQuoted([Param(Braced([120, 37, 39, 125, 39]))])]))
+1:24-1:34 Word(Word([DoubleQuoted([Param(Braced([120, 58, 45, 92, 125]))])]))
+1:35-1:44 Word(Word([Param(Braced([120, 58, 45, 34, 125, 34]))]))
+1:44-2:1 Newline
+2:1-2:29 Word(Word([DoubleQuoted([Arith([49, 32, 43, 32, 36, 40, 101, 99, 104, 111, 32, 50, 41]), CommandSub(CommandSub { style: Backtick, source: [101, 99, 104, 111, 32, 120] })])]))
+2:29-3:1 Newline

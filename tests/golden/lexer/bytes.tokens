@@ -1,0 +1,4 @@
+1:1-1:2 Word(Word([Literal([255])]))
+1:3-1:6 Word(Word([DoubleQuoted([Literal([254])])]))
+1:7-1:9 Word(Word([Escaped(128)]))
+1:9-2:1 Newline

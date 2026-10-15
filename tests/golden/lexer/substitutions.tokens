@@ -1,0 +1,10 @@
+1:1-1:6 Word(Word([Param(Name([110, 97, 109, 101]))]))
+1:7-1:17 Word(Word([Param(Braced([120, 58, 45, 36, 123, 121, 125]))]))
+1:18-1:25 Word(Word([DoubleQuoted([Param(Special(64)), Literal([58]), Param(Special(63))])]))
+1:26-1:43 Word(Word([CommandSub(CommandSub { style: Backtick, source: [101, 99, 104, 111, 32, 92, 96, 110, 101, 115, 116, 101, 100, 92, 96] })]))
+1:43-2:1 Newline
+2:1-2:15 Word(Word([DoubleQuoted([Literal([97]), CommandSub(CommandSub { style: DollarParen, source: [101, 99, 104, 111, 32, 34, 41, 34] })])]))
+2:16-3:9 Word(Word([CommandSub(CommandSub { style: DollarParen, source: [32, 40, 101, 99, 104, 111, 32, 36, 40, 101, 99, 104, 111, 32, 120, 41, 41, 59, 32, 35, 32, 99, 111, 109, 109, 101, 110, 116, 32, 41, 10, 101, 99, 104, 111, 32, 121, 32] })]))
+3:9-4:1 Newline
+4:1-4:32 Word(Word([Arith([49, 32, 43, 32, 40, 50, 32, 42, 32, 40, 51, 41, 41, 32, 43, 32, 36, 40, 40, 52, 32, 43, 32, 53, 41, 41])]))
+4:32-5:1 Newline
