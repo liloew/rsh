@@ -1,0 +1,3 @@
+plain ) ' " ; | <<not-a-redir
+$x $(not-executed) `not-executed` \literal
+$literal

@@ -304,6 +304,23 @@ impl Parser<'_> {
         } else {
             None
         };
+        if self.op(Op::HereDoc) || self.op(Op::HereDocStrip) {
+            self.advance();
+            if let Some(Token {
+                kind: TokenKind::HereDocDelimiter { word, document },
+                ..
+            }) = self.peek()
+            {
+                let redirection = Redirection {
+                    fd,
+                    op: RedirOp::HereDoc(document.clone()),
+                    target: word.clone(),
+                };
+                self.advance();
+                return Ok(redirection);
+            }
+            return Err(self.error("here-document delimiter"));
+        }
         let op = match self.peek().map(|t| &t.kind) {
             Some(TokenKind::Operator(Op::Less)) => RedirOp::Input,
             Some(TokenKind::Operator(Op::Greater)) => RedirOp::Output,
@@ -312,7 +329,6 @@ impl Parser<'_> {
             Some(TokenKind::Operator(Op::DupOutput)) => RedirOp::DupOutput,
             Some(TokenKind::Operator(Op::ReadWrite)) => RedirOp::ReadWrite,
             Some(TokenKind::Operator(Op::Clobber)) => RedirOp::Clobber,
-            // TODO(M4): parse here-document delimiters and collect their bodies.
             _ => return Err(self.error("supported redirection")),
         };
         self.advance();

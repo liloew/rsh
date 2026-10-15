@@ -168,12 +168,16 @@ fn all_redirection_forms_and_empty_commands() {
         let tree = parse(source.as_bytes()).unwrap();
         assert_eq!(parse(&tree.to_source_bytes()).unwrap(), tree);
     }
-    for source in ["cat <<EOF", "cat <<-EOF", "f() { :; }"] {
+    for source in ["cat <<EOF", "cat <<-EOF"] {
         assert!(matches!(
             parse(source.as_bytes()),
-            Err(ParseError::Syntax { .. })
+            Err(ParseError::Incomplete(_))
         ));
     }
+    assert!(matches!(
+        parse(b"f() { :; }"),
+        Err(ParseError::Syntax { .. })
+    ));
 }
 
 #[test]
@@ -350,4 +354,36 @@ fn for_omitted_in_uses_exactly_one_separator_or_none() {
         parse(b"for i\n\n; do :; done"),
         Err(ParseError::Syntax { .. })
     ));
+}
+
+#[test]
+fn heredoc_ast_roundtrips_nested_groups_pipelines_and_substitutions() {
+    for source in [
+        "cat <<A <<-'B'\nfirst\nA\n\tsecond\n\tB\n",
+        "{ cat <<E; echo done; } >out\n$x\nE\n",
+        "cat <<A | { cat <<B; cat; }\none\nA\ntwo\nB\n",
+        "echo \"$(cat <<EOF\n) not syntax\nEOF\n)\"\n",
+        "cat <<''\n\n",
+        "cat <<E\\OF\n$x\nEOF\n",
+        "(cat) <<E\ncontent\nE\n",
+        "if cat <<E\nx\nE\nthen :; fi",
+    ] {
+        let ast = parse(source.as_bytes()).unwrap_or_else(|e| panic!("{source}: {e}"));
+        let displayed = ast.to_string();
+        assert_eq!(
+            parse(displayed.as_bytes()).unwrap_or_else(|e| panic!("{displayed}: {e}")),
+            ast
+        );
+    }
+    for source in [
+        "cat <<E",
+        "cat <<E\n",
+        "cat <<E\nwrong\n",
+        "cat <<A <<B\na\nA\nb\n",
+    ] {
+        assert!(matches!(
+            parse(source.as_bytes()),
+            Err(ParseError::Incomplete(_))
+        ));
+    }
 }

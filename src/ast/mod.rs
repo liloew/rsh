@@ -115,7 +115,7 @@ pub struct Redirection {
     pub target: Word,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RedirOp {
     Input,
     Output,
@@ -124,8 +124,17 @@ pub enum RedirOp {
     DupOutput,
     ReadWrite,
     Clobber,
+    HereDoc(Box<HereDoc>),
 }
-// TODO(M4): here-document AST data and body collection.
+/// The lexer collects bytes; M5 will evaluate `parts` for unquoted delimiters.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HereDoc {
+    pub delimiter: Vec<u8>,
+    pub quoted: bool,
+    pub strip_tabs: bool,
+    pub raw: Vec<u8>,
+    pub parts: Vec<WordPart>,
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CompoundCommand {

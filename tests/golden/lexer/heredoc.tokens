@@ -1,0 +1,9 @@
+1:1-1:4 Word(Word([Literal([99, 97, 116])]))
+1:5-1:7 Operator(HereDoc)
+1:7-1:8 HereDocDelimiter { word: Word([Literal([65])]), document: HereDoc { delimiter: [65], quoted: false, strip_tabs: false, raw: [36, 120, 32, 41, 32, 39, 32, 34, 10], parts: [Param(Name([120])), Literal([32, 41, 32, 39, 32, 34, 10])] } }
+1:9-1:12 Operator(HereDocStrip)
+1:12-1:15 HereDocDelimiter { word: Word([SingleQuoted([66])]), document: HereDoc { delimiter: [66], quoted: true, strip_tabs: true, raw: [108, 105, 116, 101, 114, 97, 108, 10], parts: [Literal([108, 105, 116, 101, 114, 97, 108, 10])] } }
+1:15-2:1 Newline
+6:1-6:5 Word(Word([Literal([101, 99, 104, 111])]))
+6:6-9:3 Word(Word([DoubleQuoted([CommandSub(CommandSub { style: DollarParen, source: [99, 97, 116, 32, 60, 60, 69, 10, 41, 32, 100, 97, 116, 97, 10, 69, 10] })])]))
+9:3-10:1 Newline

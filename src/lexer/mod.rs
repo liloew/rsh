@@ -1,9 +1,6 @@
 //! Byte-oriented token recognition (SPEC section 3), without expansion or parsing.
-//!
-//! TODO(M4): collect here-document bodies after the delimiter's newline, including
-//! quoted delimiters and <<- tab stripping. Only their operators are recognized now.
 
-use crate::ast::{CommandSub, CommandSubStyle, GlobChar, ParamExpr, Word, WordPart};
+use crate::ast::{CommandSub, CommandSubStyle, GlobChar, HereDoc, ParamExpr, Word, WordPart};
 
 /// Bound recursive quote/substitution scanning, including the resulting tree depth.
 pub const MAX_NESTING: usize = 64;
@@ -32,6 +29,7 @@ pub struct Token {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TokenKind {
     Word(Word),
+    HereDocDelimiter { word: Word, document: Box<HereDoc> },
     IoNumber(Vec<u8>),
     Newline,
     Operator(Operator),
@@ -102,11 +100,7 @@ pub fn lex(input: &[u8]) -> Result<Vec<Token>, LexError> {
             column: 1,
         },
     };
-    let mut tokens = Vec::new();
-    while let Some(token) = lexer.next_token(0)? {
-        tokens.push(token);
-    }
-    Ok(tokens)
+    lexer.tokens(0, false).map(|(tokens, _)| tokens)
 }
 
 #[derive(Clone)]
@@ -486,20 +480,127 @@ impl Lexer<'_> {
     fn command_sub(&mut self, opened: Position, depth: usize) -> Result<Vec<u8>, LexError> {
         self.check_depth(depth)?;
         let start = self.position.offset;
+        let (_, close) = self.tokens(depth + 1, true)?;
+        match close {
+            Some(close) => Ok(self.source(start, close.offset)),
+            None => Err(self.incomplete("command substitution", opened)),
+        }
+    }
+
+    /// Each command-substitution level owns its pending delimiter queue.
+    fn tokens(
+        &mut self,
+        depth: usize,
+        closing: bool,
+    ) -> Result<(Vec<Token>, Option<Position>), LexError> {
+        let mut tokens: Vec<Token> = Vec::new();
+        let mut expect = None;
+        let mut pending: Vec<(usize, bool, Position)> = Vec::new();
         let mut parens = 0usize;
-        loop {
-            let Some(token) = self.next_token(depth + 1)? else {
-                return Err(self.incomplete("command substitution", opened));
-            };
-            match token.kind {
-                TokenKind::Operator(Operator::LeftParen) => parens += 1,
-                TokenKind::Operator(Operator::RightParen) if parens == 0 => {
-                    // next_token may have skipped leading whitespace/comments.
-                    return Ok(self.source(start, token.span.start.offset));
+        while let Some(token) = self.next_token(depth)? {
+            if let Some((strip, opened)) = expect.take()
+                && matches!(token.kind, TokenKind::Word(_))
+            {
+                pending.push((tokens.len(), strip, opened));
+            }
+            match &token.kind {
+                TokenKind::Operator(Operator::HereDoc | Operator::HereDocStrip) => {
+                    expect = Some((
+                        token.kind == TokenKind::Operator(Operator::HereDocStrip),
+                        token.span.start,
+                    ));
                 }
-                TokenKind::Operator(Operator::RightParen) => parens -= 1,
+                TokenKind::Operator(Operator::LeftParen) => parens += 1,
+                TokenKind::Operator(Operator::RightParen) if closing && parens == 0 => {
+                    if let Some((_, _, opened)) = pending.first() {
+                        return Err(self.incomplete("here-document", *opened));
+                    }
+                    return Ok((tokens, Some(token.span.start)));
+                }
+                TokenKind::Operator(Operator::RightParen) if parens > 0 => parens -= 1,
                 _ => {}
             }
+            let newline = token.kind == TokenKind::Newline;
+            tokens.push(token);
+            if newline {
+                for (index, strip, opened) in pending.drain(..) {
+                    let Some(Token {
+                        kind: TokenKind::Word(word),
+                        ..
+                    }) = tokens.get(index)
+                    else {
+                        continue;
+                    };
+                    let word = word.clone();
+                    let (delimiter, quoted) = delimiter(&word);
+                    let raw = self.here_body(&delimiter, quoted, strip, opened)?;
+                    let parts = if quoted {
+                        if raw.is_empty() {
+                            Vec::new()
+                        } else {
+                            vec![WordPart::Literal(raw.clone())]
+                        }
+                    } else {
+                        here_parts(&raw, depth + 1)?
+                    };
+                    let document = Box::new(HereDoc {
+                        delimiter,
+                        quoted,
+                        strip_tabs: strip,
+                        raw,
+                        parts,
+                    });
+                    if let Some(token) = tokens.get_mut(index) {
+                        token.kind = TokenKind::HereDocDelimiter { word, document };
+                    }
+                }
+            }
+        }
+        if let Some((_, _, opened)) = pending.first() {
+            return Err(self.incomplete("here-document", *opened));
+        }
+        if let Some((_, opened)) = expect {
+            return Err(self.incomplete("here-document delimiter", opened));
+        }
+        Ok((tokens, None))
+    }
+
+    fn here_body(
+        &mut self,
+        delimiter: &[u8],
+        quoted: bool,
+        strip: bool,
+        opened: Position,
+    ) -> Result<Vec<u8>, LexError> {
+        let mut body = Vec::new();
+        loop {
+            if self.peek().is_none() {
+                return Err(self.incomplete("here-document", opened));
+            }
+            let mut line = Vec::new();
+            loop {
+                if strip && line.is_empty() {
+                    while self.peek() == Some(b'\t') {
+                        self.bump();
+                    }
+                }
+                match self.bump() {
+                    Some(b'\n') | None => break,
+                    Some(b'\\') if !quoted && self.peek() == Some(b'\n') => {
+                        self.bump();
+                    }
+                    Some(b'\\') if !quoted && self.peek() == Some(b'\\') => {
+                        self.bump();
+                        line.extend_from_slice(b"\\\\");
+                    }
+                    Some(byte) => line.push(byte),
+                }
+            }
+            if line == delimiter {
+                return Ok(body);
+            }
+            body.extend_from_slice(&line);
+            body.push(b'\n');
         }
     }
 
@@ -577,6 +678,71 @@ fn is_boundary(byte: u8) -> bool {
         byte,
         b' ' | b'\t' | b'\n' | b'&' | b'|' | b';' | b'(' | b')' | b'<' | b'>'
     )
+}
+
+fn here_parts(input: &[u8], depth: usize) -> Result<Vec<WordPart>, LexError> {
+    let mut lexer = Lexer {
+        input,
+        position: Position {
+            offset: 0,
+            line: 1,
+            column: 1,
+        },
+    };
+    lexer.check_depth(depth)?;
+    let mut parts = Vec::new();
+    while let Some(byte) = lexer.peek() {
+        match byte {
+            b'$' => {
+                if let Some(part) = lexer.dollar(depth + 1, true)? {
+                    parts.push(part);
+                } else {
+                    Lexer::literal(&mut parts, b'$');
+                }
+            }
+            b'`' => parts.push(lexer.backtick()?),
+            b'\\' => {
+                lexer.bump();
+                if let Some(next @ (b'$' | b'`' | b'\\')) = lexer.peek() {
+                    lexer.bump();
+                    parts.push(WordPart::Escaped(next));
+                } else {
+                    Lexer::literal(&mut parts, b'\\');
+                }
+            }
+            _ => {
+                lexer.bump();
+                Lexer::literal(&mut parts, byte);
+            }
+        }
+    }
+    Ok(parts)
+}
+
+fn delimiter(word: &Word) -> (Vec<u8>, bool) {
+    fn append(parts: &[WordPart], out: &mut Vec<u8>, quoted: &mut bool) {
+        for part in parts {
+            match part {
+                WordPart::SingleQuoted(bytes) => {
+                    *quoted = true;
+                    out.extend_from_slice(bytes);
+                }
+                WordPart::DoubleQuoted(inner) => {
+                    *quoted = true;
+                    append(inner, out, quoted);
+                }
+                WordPart::Escaped(byte) => {
+                    *quoted = true;
+                    out.push(*byte);
+                }
+                _ => out.extend_from_slice(&Word(vec![part.clone()]).to_source_bytes()),
+            }
+        }
+    }
+    let mut bytes = Vec::new();
+    let mut quoted = false;
+    append(&word.0, &mut bytes, &mut quoted);
+    (bytes, quoted)
 }
 
 #[cfg(test)]

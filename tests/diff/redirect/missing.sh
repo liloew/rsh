@@ -1,0 +1,2 @@
+cat <missing
+echo restored

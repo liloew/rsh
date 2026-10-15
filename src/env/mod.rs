@@ -16,6 +16,8 @@ pub struct ShellEnv {
     pub cwd: PathBuf,
     pub last_status: u8,
     pub exit_requested: Option<u8>,
+    /// Placeholder for set -C (the option builtin belongs to M7).
+    pub noclobber: bool,
 }
 
 impl ShellEnv {
@@ -26,6 +28,7 @@ impl ShellEnv {
             cwd,
             last_status: 0,
             exit_requested: None,
+            noclobber: false,
         };
         for (key, value) in std::env::vars_os() {
             env.variables.insert(
@@ -100,6 +103,7 @@ mod tests {
             cwd: PathBuf::from("/"),
             last_status: 0,
             exit_requested: None,
+            noclobber: false,
         };
         env.mark_exported(b"X".to_vec());
         assert!(env.exported().is_empty());

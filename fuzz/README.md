@@ -33,3 +33,12 @@ compound-command kind, separators, redirections, incomplete input and non-UTF-8 
 Compound nesting is bounded so that arbitrary input cannot exhaust the parser stack.
 A stable smoke run can use `cargo run --manifest-path fuzz/Cargo.toml --bin parser --
 <temporary-corpus-directory> -runs=20000 -timeout=2`; it has no sanitizer/coverage instrumentation.
+
+# Here-document coverage (M4)
+
+Both corpora include heredoc queues, quoted/escaped delimiters, <<- tabs, nested
+command substitutions, pipeline/group attachment, binary bodies and incomplete EOF.
+Lexer fuzzing checks quoted bodies remain literal and token spans stay ordered;
+parser fuzzing checks canonical heredoc source is structurally lossless. Runtime
+redirection stress tests, including >1MB bodies and fd restoration, live in
+`tests/redirect.rs`; fuzz targets only lex/parse and never execute arbitrary input.

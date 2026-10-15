@@ -12,9 +12,17 @@ pub enum PrepareError {
     Nul(#[from] std::ffi::NulError),
 }
 
+mod fd;
+pub use fd::{
+    FdGuard, FdOp, FdPlan, OpenMode, close_stdio, closed_stdio, here_input, read_worker_source,
+    write_fd,
+};
+
 pub struct PreparedProcess {
     cwd: CString,
     action: Action,
+    redirects: FdPlan,
+    redirection_status: u8,
 }
 enum Action {
     Exec {
@@ -96,6 +104,8 @@ impl PreparedProcess {
         };
         Ok(Self {
             cwd: CString::new(cwd.as_os_str().as_bytes())?,
+            redirects: FdPlan::default(),
+            redirection_status: 1,
             action: Action::Exec {
                 paths,
                 _argv: strings,
@@ -108,6 +118,11 @@ impl PreparedProcess {
             },
         })
     }
+    pub fn with_redirects(mut self, plan: FdPlan, status: u8) -> Self {
+        self.redirects.ops.extend(plan.ops);
+        self.redirection_status = status;
+        self
+    }
     pub fn finished(
         status: u8,
         stdout: Vec<u8>,
@@ -116,6 +131,8 @@ impl PreparedProcess {
     ) -> Result<Self, PrepareError> {
         Ok(Self {
             cwd: CString::new(cwd.as_os_str().as_bytes())?,
+            redirects: FdPlan::default(),
+            redirection_status: 1,
             action: Action::Finish {
                 status,
                 stdout,
@@ -182,6 +199,9 @@ pub fn spawn_pipeline(
     processes: &[PreparedProcess],
     options: SpawnOptions,
 ) -> io::Result<Vec<Child>> {
+    for process in processes {
+        process.redirects.protect_backups()?;
+    }
     let mut pipes = Vec::new();
     for _ in 1..processes.len() {
         let (read, write) = nix::unistd::pipe()?;
@@ -196,6 +216,11 @@ pub fn spawn_pipeline(
         .iter()
         .flat_map(|(r, w)| [r.as_raw_fd(), w.as_raw_fd()])
         .chain(null.iter().map(AsRawFd::as_raw_fd))
+        .chain(
+            processes
+                .iter()
+                .flat_map(|process| process.redirects.resource_fds()),
+        )
         .collect();
     let mut children: Vec<Child> = Vec::new();
     for (i, process) in processes.iter().enumerate() {
@@ -292,13 +317,22 @@ fn child_run(
             libc::_exit(1);
         }
         for fd in fds {
-            if *fd > 2 {
+            if *fd > 2 && !process.redirects.owns(*fd) {
                 libc::close(*fd);
             }
         }
         if libc::chdir(process.cwd.as_ptr()) < 0 {
             write_child(2, b"rsh: execution: cannot change directory\n");
             libc::_exit(1);
+        }
+        if let Err(failure) = process.redirects.apply() {
+            process.redirects.report(failure);
+            libc::_exit(i32::from(process.redirection_status));
+        }
+        for fd in process.redirects.resource_fds() {
+            if !process.redirects.inherited(fd) {
+                libc::close(fd);
+            }
         }
         match &process.action {
             Action::Finish {

@@ -17,7 +17,10 @@ fn run() -> std::io::Result<u8> {
     let mut args = std::env::args_os().skip(1);
     let first = args.next();
     if first.as_deref() == Some(OsStr::new("--m3-worker")) {
-        return worker(args.collect());
+        return worker(args.collect(), true);
+    }
+    if first.as_deref() == Some(OsStr::new("--subshell-worker")) {
+        return worker(args.collect(), false);
     }
     let dump = first.as_deref() == Some(OsStr::new("--dump-ast"));
     let first = if dump { args.next() } else { first };
@@ -68,7 +71,7 @@ fn evaluate(source: &[u8], dump: bool, env: ShellEnv, background: bool) -> std::
     shell.background_signals = background;
     Ok(shell.run(&script))
 }
-fn worker(args: Vec<OsString>) -> std::io::Result<u8> {
+fn worker(args: Vec<OsString>, background: bool) -> std::io::Result<u8> {
     let (Some(source), Some(status)) = (args.first(), args.get(1)) else {
         return Ok(usage());
     };
@@ -78,7 +81,22 @@ fn worker(args: Vec<OsString>) -> std::io::Result<u8> {
     let mut env = ShellEnv::inherited()?;
     env.variables.clear();
     env.last_status = status;
+    let mut closed = 0;
     for arg in args.iter().skip(2) {
+        if let Some(value) = arg.as_bytes().strip_prefix(b"c=") {
+            let Some(mask) = std::str::from_utf8(value)
+                .ok()
+                .and_then(|s| s.parse::<u8>().ok())
+            else {
+                return Ok(usage());
+            };
+            closed = mask;
+            continue;
+        }
+        if arg == "n=1" || arg == "n=0" {
+            env.noclobber = arg == "n=1";
+            continue;
+        }
         let Some((flag, bytes)) = arg.as_bytes().split_first() else {
             return Ok(usage());
         };
@@ -100,5 +118,17 @@ fn worker(args: Vec<OsString>) -> std::io::Result<u8> {
         };
         env.variables.insert(name, var);
     }
-    evaluate(source.as_bytes(), false, env, true)
+    let source = if let Some(bytes) = source.as_bytes().strip_prefix(b"@") {
+        let Some(fd) = std::str::from_utf8(bytes)
+            .ok()
+            .and_then(|s| s.parse::<i32>().ok())
+        else {
+            return Ok(usage());
+        };
+        rsh::sys::read_worker_source(fd)?
+    } else {
+        source.as_bytes().to_vec()
+    };
+    rsh::sys::close_stdio(closed);
+    evaluate(&source, false, env, background)
 }

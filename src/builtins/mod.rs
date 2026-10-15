@@ -1,10 +1,11 @@
-//! Only the builtins required by M3. Full options/remaining builtins are TODO(M7).
+//! M3 builtins and M4 redirection-only exec. Remaining builtin behavior is TODO(M7).
 use crate::env::{ShellEnv, valid_name};
 use std::os::unix::ffi::OsStrExt;
 use std::path::{Component, Path, PathBuf};
 
 #[derive(Debug, Clone, Copy)]
 pub enum Builtin {
+    Exec,
     Colon,
     Exit,
     Export,
@@ -16,6 +17,7 @@ pub enum Builtin {
 
 pub fn special(name: &[u8]) -> Option<Builtin> {
     match name {
+        b"exec" => Some(Builtin::Exec),
         b":" => Some(Builtin::Colon),
         b"exit" => Some(Builtin::Exit),
         b"export" => Some(Builtin::Export),
@@ -55,6 +57,13 @@ impl Outcome {
 
 pub fn run(builtin: Builtin, args: &[Vec<u8>], env: &mut ShellEnv) -> Outcome {
     match builtin {
+        Builtin::Exec => {
+            if args.is_empty() {
+                Outcome::default()
+            } else {
+                Outcome::error(b"exec", b"command replacement is TODO(M7)", 2)
+            }
+        }
         Builtin::Colon | Builtin::True => Outcome::default(),
         Builtin::False => Outcome {
             status: 1,

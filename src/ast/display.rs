@@ -7,7 +7,7 @@ use std::fmt;
 impl Script {
     pub fn to_source_bytes(&self) -> Vec<u8> {
         let mut out = Vec::new();
-        script(self, &mut out);
+        script(self, &mut out, &mut Vec::new());
         out
     }
 }
@@ -18,6 +18,13 @@ impl fmt::Display for Script {
     }
 }
 
+impl Word {
+    pub fn to_source_bytes(&self) -> Vec<u8> {
+        let mut out = Vec::new();
+        parts(&self.0, &mut out);
+        out
+    }
+}
 impl fmt::Display for Word {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let mut out = Vec::new();
@@ -26,24 +33,30 @@ impl fmt::Display for Word {
     }
 }
 
-fn script(value: &Script, out: &mut Vec<u8>) {
+fn script<'a>(value: &'a Script, out: &mut Vec<u8>, pending: &mut Vec<&'a HereDoc>) {
     for item in &value.0 {
-        pipeline(&item.and_or.first, out);
+        pipeline(&item.and_or.first, out, pending);
         for (op, pipe) in &item.and_or.rest {
             out.extend_from_slice(match op {
                 AndOrOp::And => b" && ",
                 AndOrOp::Or => b" || ",
             });
-            pipeline(pipe, out);
+            pipeline(pipe, out, pending);
         }
         out.extend_from_slice(match item.separator {
             Separator::Sequential => b"; ",
             Separator::Background => b" & ",
         });
+        out.push(b'\n');
+        for document in pending.drain(..) {
+            out.extend_from_slice(&document.raw);
+            out.extend_from_slice(&document.delimiter);
+            out.push(b'\n');
+        }
     }
 }
 
-fn pipeline(value: &Pipeline, out: &mut Vec<u8>) {
+fn pipeline<'a>(value: &'a Pipeline, out: &mut Vec<u8>, pending: &mut Vec<&'a HereDoc>) {
     if value.negated {
         out.extend_from_slice(b"! ");
     }
@@ -64,26 +77,26 @@ fn pipeline(value: &Pipeline, out: &mut Vec<u8>) {
                             parts(&a.value.0, out);
                         }
                         SimplePart::Word(w) => parts(&w.0, out),
-                        SimplePart::Redirection(r) => redirection(r, out),
+                        SimplePart::Redirection(r) => redirection(r, out, pending),
                     }
                 }
             }
             Command::Compound(compound, redirs) => {
-                compound_source(compound, out);
+                compound_source(compound, out, pending);
                 for r in redirs {
                     out.push(b' ');
-                    redirection(r, out);
+                    redirection(r, out, pending);
                 }
             }
         }
     }
 }
 
-fn redirection(value: &Redirection, out: &mut Vec<u8>) {
+fn redirection<'a>(value: &'a Redirection, out: &mut Vec<u8>, pending: &mut Vec<&'a HereDoc>) {
     if let Some(fd) = &value.fd {
         out.extend_from_slice(fd);
     }
-    out.extend_from_slice(match value.op {
+    out.extend_from_slice(match &value.op {
         RedirOp::Input => b"<",
         RedirOp::Output => b">",
         RedirOp::Append => b">>",
@@ -91,22 +104,30 @@ fn redirection(value: &Redirection, out: &mut Vec<u8>) {
         RedirOp::DupOutput => b">&",
         RedirOp::ReadWrite => b"<>",
         RedirOp::Clobber => b">|",
+        RedirOp::HereDoc(document) => {
+            pending.push(document);
+            if document.strip_tabs { b"<<-" } else { b"<<" }
+        }
     });
     out.push(b' ');
     parts(&value.target.0, out);
 }
 
-fn compound_source(value: &CompoundCommand, out: &mut Vec<u8>) {
+fn compound_source<'a>(
+    value: &'a CompoundCommand,
+    out: &mut Vec<u8>,
+    pending: &mut Vec<&'a HereDoc>,
+) {
     match value {
         CompoundCommand::Brace(body) => {
             out.extend_from_slice(b"{ ");
-            script(body, out);
+            script(body, out, pending);
             out.push(b'}');
         }
         CompoundCommand::Subshell(body) => {
             // POSIX 2.9.4.1: avoid ambiguous adjacent leading parentheses.
             out.extend_from_slice(b"( ");
-            script(body, out);
+            script(body, out, pending);
             out.push(b')');
         }
         CompoundCommand::If {
@@ -115,13 +136,13 @@ fn compound_source(value: &CompoundCommand, out: &mut Vec<u8>) {
         } => {
             for (i, branch) in branches.iter().enumerate() {
                 out.extend_from_slice(if i == 0 { b"if " } else { b"elif " });
-                script(&branch.condition, out);
+                script(&branch.condition, out, pending);
                 out.extend_from_slice(b"then ");
-                script(&branch.body, out);
+                script(&branch.body, out, pending);
             }
             if let Some(body) = else_body {
                 out.extend_from_slice(b"else ");
-                script(body, out);
+                script(body, out, pending);
             }
             out.extend_from_slice(b"fi");
         }
@@ -131,9 +152,9 @@ fn compound_source(value: &CompoundCommand, out: &mut Vec<u8>) {
             } else {
                 b"until "
             });
-            script(condition, out);
+            script(condition, out, pending);
             out.extend_from_slice(b"do ");
-            script(body, out);
+            script(body, out, pending);
             out.extend_from_slice(b"done");
         }
         CompoundCommand::For { name, words, body } => {
@@ -147,7 +168,7 @@ fn compound_source(value: &CompoundCommand, out: &mut Vec<u8>) {
                 }
             }
             out.extend_from_slice(b"; do ");
-            script(body, out);
+            script(body, out, pending);
             out.extend_from_slice(b"done");
         }
         CompoundCommand::Case { word, items } => {
@@ -163,7 +184,7 @@ fn compound_source(value: &CompoundCommand, out: &mut Vec<u8>) {
                     parts(&pattern.0, out);
                 }
                 out.extend_from_slice(b") ");
-                script(&item.body, out);
+                script(&item.body, out, pending);
                 out.extend_from_slice(b";; ");
             }
             out.extend_from_slice(b"esac");

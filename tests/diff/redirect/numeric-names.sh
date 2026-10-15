@@ -1,0 +1,5 @@
+pwd >999999999
+cat 999999999
+cat <<1000000
+numeric delimiter
+1000000

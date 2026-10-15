@@ -497,3 +497,66 @@ fn adjacent_quoted_and_unquoted_parts_form_one_word() {
         ])]
     );
 }
+
+#[test]
+fn heredoc_queue_quotes_tabs_and_body_operators() {
+    let tokens = lex(b"cat <<A <<-'B'\n$x ) ' \"\nA\n\t$y\n\tB\necho after\n").unwrap();
+    let docs: Vec<_> = tokens
+        .iter()
+        .filter_map(|t| {
+            if let TokenKind::HereDocDelimiter { document, .. } = &t.kind {
+                Some(document)
+            } else {
+                None
+            }
+        })
+        .collect();
+    assert_eq!(docs.len(), 2);
+    assert_eq!(docs[0].raw, b"$x ) ' \"\n");
+    assert!(!docs[0].quoted);
+    assert!(matches!(docs[0].parts.first(), Some(WordPart::Param(_))));
+    assert_eq!(docs[1].raw, b"$y\n");
+    assert!(docs[1].quoted && docs[1].strip_tabs);
+    assert_eq!(docs[1].parts, vec![WordPart::Literal(b"$y\n".to_vec())]);
+    assert_eq!(tokens.last().unwrap().span.end.line, 7);
+}
+
+#[test]
+fn heredocs_in_command_substitutions_have_separate_queues() {
+    let source = b"echo \"$(cat <<A\n) ' \" ; |\nA\n)\" <<B\nouter\nB\n";
+    let tokens = lex(source).unwrap();
+    assert!(
+        matches!(&tokens[1].kind,TokenKind::Word(Word(parts)) if matches!(parts.first(),Some(WordPart::DoubleQuoted(_))))
+    );
+    assert_eq!(
+        tokens
+            .iter()
+            .filter(|t| matches!(t.kind, TokenKind::HereDocDelimiter { .. }))
+            .count(),
+        1
+    );
+    for input in [
+        b"cat <<E".as_slice(),
+        b"cat <<E\ntext\n",
+        b"echo $(cat <<E\ntext\nE\n",
+    ] {
+        assert!(matches!(lex(input), Err(LexError::Incomplete(_))));
+    }
+}
+
+#[test]
+fn heredoc_line_joining_respects_backslash_parity() {
+    let input = b"cat <<E\nleft\\\nright\nback\\\\\nnext\nE\n";
+    let tokens = lex(input).unwrap();
+    let doc = tokens
+        .iter()
+        .find_map(|t| {
+            if let TokenKind::HereDocDelimiter { document, .. } = &t.kind {
+                Some(document)
+            } else {
+                None
+            }
+        })
+        .unwrap();
+    assert_eq!(doc.raw, b"leftright\nback\\\\\nnext\n");
+}
