@@ -129,7 +129,7 @@ pub fn prepare(redirs: &[Redirection], env: &ShellEnv) -> FdPlan {
 
 /// Keep the internal worker-source descriptor above every explicitly referenced fd.
 pub fn source_floor(script: &crate::ast::Script, env: &ShellEnv) -> i32 {
-    use crate::ast::{Command, CompoundCommand, SimplePart};
+    use crate::ast::{Command, SimplePart};
     fn redirs(redirs: &[Redirection], env: &ShellEnv) -> i32 {
         redirs
             .iter()
@@ -156,17 +156,41 @@ pub fn source_floor(script: &crate::ast::Script, env: &ShellEnv) -> i32 {
                             }
                         }
                     }
+                    Command::FunctionDef { definition, .. } => {
+                        max = max
+                            .max(redirs(&definition.redirs, env))
+                            .max(compound_floor(&definition.body, env));
+                    }
                     Command::Compound(compound, rs) => {
-                        max = max.max(redirs(rs, env));
-                        if let CompoundCommand::Brace(body) | CompoundCommand::Subshell(body) =
-                            compound.as_ref()
-                        {
-                            max = max.max(source_floor(body, env));
-                        }
+                        max = max.max(redirs(rs, env)).max(compound_floor(compound, env));
                     }
                 }
             }
         }
     }
     max.saturating_add(1).max(20)
+}
+
+fn compound_floor(compound: &crate::ast::CompoundCommand, env: &ShellEnv) -> i32 {
+    use crate::ast::CompoundCommand::*;
+    match compound {
+        Brace(b) | Subshell(b) | For { body: b, .. } => source_floor(b, env),
+        While { condition, body } | Until { condition, body } => {
+            source_floor(condition, env).max(source_floor(body, env))
+        }
+        If {
+            branches,
+            else_body,
+        } => branches
+            .iter()
+            .flat_map(|b| [source_floor(&b.condition, env), source_floor(&b.body, env)])
+            .chain(else_body.iter().map(|b| source_floor(b, env)))
+            .max()
+            .unwrap_or(20),
+        Case { items, .. } => items
+            .iter()
+            .map(|i| source_floor(&i.body, env))
+            .max()
+            .unwrap_or(20),
+    }
 }

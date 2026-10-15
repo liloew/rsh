@@ -81,6 +81,15 @@ fn pipeline<'a>(value: &'a Pipeline, out: &mut Vec<u8>, pending: &mut Vec<&'a He
                     }
                 }
             }
+            Command::FunctionDef { name, definition } => {
+                out.extend_from_slice(name);
+                out.extend_from_slice(b"() ");
+                compound_source(&definition.body, out, pending);
+                for r in &definition.redirs {
+                    out.push(b' ');
+                    redirection(r, out, pending);
+                }
+            }
             Command::Compound(compound, redirs) => {
                 compound_source(compound, out, pending);
                 for r in redirs {

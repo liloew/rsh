@@ -42,3 +42,12 @@ Lexer fuzzing checks quoted bodies remain literal and token spans stay ordered;
 parser fuzzing checks canonical heredoc source is structurally lossless. Runtime
 redirection stress tests, including >1MB bodies and fd restoration, live in
 `tests/redirect.rs`; fuzz targets only lex/parse and never execute arbitrary input.
+
+# Control-flow and function coverage (M6)
+
+Both corpora include function definitions with every compound-body form, attached
+redirections/heredocs, nested definitions, loop flow commands, quoted case patterns,
+recursive call syntax and incomplete/invalid headers. Parser checks protect the
+function-name invariant and round-trip the new FunctionDef node. Generated AST
+property tests also generate function nodes recursively. Fuzz targets never execute
+loops or recursive functions; bounded execution is covered in tests/control.rs.

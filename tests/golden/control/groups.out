@@ -1,0 +1,10 @@
+child:child
+parent:parent
+<TMP>
+brace:brace
+<TMP>/child
+subexit:4
+function-survives:5
+pipeline
+parent:brace
+data

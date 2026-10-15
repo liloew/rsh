@@ -1,4 +1,5 @@
-//! AST execution with M5 expansion and ordered redirections; control flow remains M6.
+//! AST execution with expansion, redirections, control flow and functions.
+mod control;
 use crate::ast::*;
 use crate::builtins::{self, Builtin, Outcome};
 use crate::env::ShellEnv;
@@ -19,11 +20,32 @@ pub enum ExecError {
     Unsupported(&'static str),
 }
 
+/// Structured non-local control is propagated through AST execution boundaries.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Flow {
+    Status(u8),
+    Break(usize),
+    Continue(usize),
+    Return(u8),
+    Exit(u8),
+}
+impl Flow {
+    pub fn status(self) -> u8 {
+        match self {
+            Self::Status(s) | Self::Return(s) | Self::Exit(s) => s,
+            Self::Break(_) | Self::Continue(_) => 0,
+        }
+    }
+}
+pub const MAX_FUNCTION_DEPTH: usize = 32;
+
 pub struct Shell {
     pub env: ShellEnv,
     executable: PathBuf,
     background: Vec<Child>,
     fd_floor: i32,
+    loop_depth: usize,
+    eval_depth: usize,
     pub background_signals: bool,
 }
 struct Simple {
@@ -40,62 +62,85 @@ impl Shell {
             executable,
             background: Vec::new(),
             fd_floor: 20,
+            loop_depth: 0,
+            eval_depth: 0,
             background_signals: false,
         }
     }
     pub fn run(&mut self, script: &Script) -> u8 {
+        self.eval_script(script).status()
+    }
+    fn eval_script(&mut self, script: &Script) -> Flow {
+        if self.eval_depth >= 128 {
+            self.env.exit_requested = Some(2);
+            let _ = sys::write_fd(2, b"rsh: execution: evaluation nesting limit exceeded\n");
+            return Flow::Exit(2);
+        }
+        self.eval_depth += 1;
         self.fd_floor = self
             .fd_floor
             .max(crate::redirect::source_floor(script, &self.env));
+        let mut flow = Flow::Status(self.env.last_status);
         for item in &script.0 {
             self.reap_background();
-            if item.separator == Separator::Background {
-                let result = self.launch_background(&item.and_or);
-                self.env.last_status = self.report(result);
+            flow = if item.separator == Separator::Background {
+                let result = self.launch_background(&item.and_or).map(Flow::Status);
+                self.report(result)
             } else {
-                self.and_or(&item.and_or);
-            }
-            if self.env.exit_requested.is_some() {
+                self.and_or(&item.and_or)
+            };
+            self.env.last_status = flow.status();
+            if !matches!(flow, Flow::Status(_)) {
                 break;
             }
         }
         self.reap_background();
-        self.env.exit_requested.unwrap_or(self.env.last_status)
+        self.eval_depth -= 1;
+        flow
     }
-    fn report(&self, result: Result<u8, ExecError>) -> u8 {
+    fn report(&self, result: Result<Flow, ExecError>) -> Flow {
+        if let Some(status) = self.env.exit_requested {
+            if let Err(e) = result {
+                let _ = sys::write_fd(2, format!("{e}\n").as_bytes());
+            }
+            return Flow::Exit(status);
+        }
         match result {
-            Ok(status) => status,
+            Ok(flow) => flow,
             Err(error) => {
-                let diagnostic = if let ExecError::Io(error) = &error {
-                    format!("rsh: execution: {error}\n")
+                let diagnostic = if let ExecError::Io(e) = &error {
+                    format!("rsh: execution: {e}\n")
                 } else {
                     format!("{error}\n")
                 };
                 let _ = sys::write_fd(2, diagnostic.as_bytes());
-                if matches!(error, ExecError::Unsupported(_)) {
+                Flow::Status(if matches!(error, ExecError::Unsupported(_)) {
                     2
                 } else {
                     1
-                }
+                })
             }
         }
     }
-    fn and_or(&mut self, list: &AndOr) {
+    fn and_or(&mut self, list: &AndOr) -> Flow {
         let result = self.pipeline(&list.first);
-        self.env.last_status = self.report(result);
-        for (op, pipeline) in &list.rest {
-            if self.env.exit_requested.is_some() {
+        let mut flow = self.report(result);
+        self.env.last_status = flow.status();
+        for (op, pipe) in &list.rest {
+            if !matches!(flow, Flow::Status(_)) {
                 break;
             }
             if matches!(op, AndOrOp::And) == (self.env.last_status == 0) {
-                let result = self.pipeline(pipeline);
-                self.env.last_status = self.report(result);
+                let result = self.pipeline(pipe);
+                flow = self.report(result);
+                self.env.last_status = flow.status();
             }
         }
+        flow
     }
     fn simple(&mut self, command: &Command) -> Result<Simple, ExecError> {
         let Command::Simple(simple) = command else {
-            return Err(ExecError::Unsupported("compound execution is TODO(M6)"));
+            return Err(ExecError::Unsupported("expected a simple command"));
         };
         let mut words = Vec::new();
         let mut assignments = Vec::new();
@@ -134,8 +179,13 @@ impl Shell {
         result?;
         let name = words.first().map(Vec::as_slice).unwrap_or_default();
         let special = builtins::special(name);
-        // Dispatch order: special builtin -> TODO(M6) function -> regular -> external.
-        let builtin = special.or_else(|| builtins::regular(name));
+        let builtin = special.or_else(|| {
+            if self.env.functions.contains_key(name) {
+                None
+            } else {
+                builtins::regular(name)
+            }
+        });
         Ok(Simple {
             words,
             assignments,
@@ -154,11 +204,23 @@ impl Shell {
             self.env.set(name.clone(), value.clone());
         }
         let outcome = if let Some(builtin) = simple.builtin {
-            builtins::run(
+            if matches!(
                 builtin,
-                simple.words.get(1..).unwrap_or_default(),
-                &mut self.env,
-            )
+                Builtin::Break | Builtin::Continue | Builtin::Return
+            ) {
+                builtins::control(
+                    builtin,
+                    simple.words.get(1..).unwrap_or_default(),
+                    &mut self.env,
+                    self.loop_depth,
+                )
+            } else {
+                builtins::run(
+                    builtin,
+                    simple.words.get(1..).unwrap_or_default(),
+                    &mut self.env,
+                )
+            }
         } else {
             Outcome {
                 status: self.env.substitution_status.unwrap_or(0),
@@ -216,55 +278,63 @@ impl Shell {
         )?
         .with_redirects(crate::redirect::prepare(&simple.redirs, &self.env), 1))
     }
-    fn pipeline(&mut self, pipeline: &Pipeline) -> Result<u8, ExecError> {
+    fn pipeline(&mut self, pipeline: &Pipeline) -> Result<Flow, ExecError> {
         self.reap_background();
-        let status = if let [Command::Compound(compound, redirs)] = pipeline.commands.as_slice()
-            && matches!(compound.as_ref(), CompoundCommand::Brace(_))
-        {
-            let CompoundCommand::Brace(body) = compound.as_ref() else {
-                return Err(ExecError::Unsupported("compound command"));
-            };
-            let redirs = redirs
-                .iter()
-                .map(|r| self.expand_redirect(r))
-                .collect::<Result<Vec<_>, _>>()?;
-            let plan = crate::redirect::prepare(&redirs, &self.env);
-            let guard = sys::FdGuard::save(&plan, self.fd_floor)?;
-            let status = if let Err(error) = plan.apply() {
-                plan.report(error);
-                1
-            } else {
-                self.run(body)
-            };
-            drop(guard);
-            status
-        } else if let [Command::Simple(command)] = pipeline.commands.as_slice() {
-            self.env.substitution_status = None;
-            let simple = self.simple(&Command::Simple(command.clone()))?;
-            if simple.words.is_empty() || simple.builtin.is_some() {
-                self.redirected_builtin(&simple)?
-            } else {
-                self.wait_processes(vec![self.prepare(&simple)?])?
+        let flow = if let [command] = pipeline.commands.as_slice() {
+            match command {
+                Command::FunctionDef { name, definition } => {
+                    self.env
+                        .functions
+                        .insert(name.clone(), std::rc::Rc::new(definition.clone()));
+                    Flow::Status(0)
+                }
+                Command::Compound(compound, redirs)
+                    if !matches!(compound.as_ref(), CompoundCommand::Subshell(_)) =>
+                {
+                    self.redirected_compound(compound, redirs)?
+                }
+                Command::Simple(_) => {
+                    self.env.substitution_status = None;
+                    let simple = self.simple(command)?;
+                    if simple.builtin.is_some() || simple.words.is_empty() {
+                        self.redirected_builtin(&simple)?
+                    } else if let Some(function) = simple
+                        .words
+                        .first()
+                        .and_then(|n| self.env.functions.get(n))
+                        .cloned()
+                    {
+                        self.call_function(&simple, &function)?
+                    } else {
+                        Flow::Status(self.wait_processes(vec![self.prepare(&simple)?])?)
+                    }
+                }
+                _ => {
+                    let process = self.prepare_command(command, false, false)?;
+                    Flow::Status(self.wait_processes(vec![process])?)
+                }
             }
         } else {
-            let prepared = pipeline
+            let processes = pipeline
                 .commands
                 .iter()
                 .enumerate()
-                .map(|(index, command)| {
-                    self.prepare_command(command, index > 0, index + 1 < pipeline.commands.len())
-                })
+                .map(|(i, c)| self.prepare_command(c, i > 0, i + 1 < pipeline.commands.len()))
                 .collect::<Result<Vec<_>, _>>()?;
-            self.wait_processes(prepared)?
+            Flow::Status(self.wait_processes(processes)?)
         };
         self.reap_background();
-        Ok(if pipeline.negated {
-            u8::from(status == 0)
+        Ok(if let Flow::Status(s) = flow {
+            Flow::Status(if pipeline.negated {
+                u8::from(s == 0)
+            } else {
+                s
+            })
         } else {
-            status
+            flow
         })
     }
-    fn redirected_builtin(&mut self, simple: &Simple) -> Result<u8, ExecError> {
+    fn redirected_builtin(&mut self, simple: &Simple) -> Result<Flow, ExecError> {
         let plan = crate::redirect::prepare(&simple.redirs, &self.env);
         let guard = match sys::FdGuard::save(&plan, self.fd_floor) {
             Ok(guard) => guard,
@@ -273,7 +343,11 @@ impl Shell {
                 if simple.special {
                     self.env.exit_requested = Some(2);
                 }
-                return Ok(if simple.special { 2 } else { 1 });
+                return Ok(if simple.special {
+                    Flow::Exit(2)
+                } else {
+                    Flow::Status(1)
+                });
             }
         };
         if let Err(failure) = plan.apply() {
@@ -282,7 +356,11 @@ impl Shell {
             if simple.special {
                 self.env.exit_requested = Some(2);
             }
-            return Ok(if simple.special { 2 } else { 1 });
+            return Ok(if simple.special {
+                Flow::Exit(2)
+            } else {
+                Flow::Status(1)
+            });
         }
         let outcome = self.parent_builtin(simple);
         let output =
@@ -292,7 +370,13 @@ impl Shell {
         } else {
             drop(guard);
         }
-        Ok(if output.is_err() { 1 } else { outcome.status })
+        Ok(if let Some(s) = self.env.exit_requested {
+            Flow::Exit(s)
+        } else if output.is_err() {
+            Flow::Status(1)
+        } else {
+            outcome.flow.unwrap_or(Flow::Status(outcome.status))
+        })
     }
     fn wait_processes(&mut self, prepared: Vec<PreparedProcess>) -> Result<u8, ExecError> {
         let children = sys::spawn_pipeline(
@@ -323,15 +407,15 @@ impl Shell {
         pipe_in: bool,
         pipe_out: bool,
     ) -> Result<PreparedProcess, ExecError> {
-        let command = match command {
-            Command::Simple(_) => command.clone(),
-            Command::Compound(compound, redirs) => {
-                let body = match compound.as_ref() {
-                    CompoundCommand::Brace(body) | CompoundCommand::Subshell(body) => body.clone(),
-                    _ => return Err(ExecError::Unsupported("control flow is TODO(M6)")),
-                };
-                Command::Compound(Box::new(CompoundCommand::Brace(body)), redirs.clone())
-            }
+        let command = if let Command::Compound(compound, redirs) = command
+            && let CompoundCommand::Subshell(body) = compound.as_ref()
+        {
+            Command::Compound(
+                Box::new(CompoundCommand::Brace(body.clone())),
+                redirs.clone(),
+            )
+        } else {
+            command.clone()
         };
         // Expansions and their variable side effects belong to each pipeline/subshell
         // process. Re-exec before interpreting Rust, keeping the fork path signal-safe.
@@ -410,6 +494,23 @@ impl Shell {
                 encoded.extend_from_slice(value);
             }
             words.push(encoded);
+        }
+        words.push(format!("h={}", self.env.function_depth).into_bytes());
+        for (name, function) in &self.env.functions {
+            let script = Script(vec![ListItem {
+                separator: Separator::Sequential,
+                and_or: AndOr {
+                    first: Pipeline {
+                        negated: false,
+                        commands: vec![Command::FunctionDef {
+                            name: name.clone(),
+                            definition: function.as_ref().clone(),
+                        }],
+                    },
+                    rest: Vec::new(),
+                },
+            }]);
+            words.push([b"f=".as_slice(), &script.to_source_bytes()].concat());
         }
         words.push(script.to_source_bytes());
         let payload = crate::env::encode_snapshot(&words);

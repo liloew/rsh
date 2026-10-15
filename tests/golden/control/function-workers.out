@@ -1,0 +1,7 @@
+pipe:1
+sink:1
+subshell:1
+capture:<capture:1>
+nested-return:9
+old
+new

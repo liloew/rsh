@@ -421,6 +421,22 @@ pub fn has_children() -> io::Result<bool> {
     }
 }
 
+/// Peak resident memory, normalized to bytes on Linux and macOS (for stress checks).
+pub fn peak_resident_bytes() -> io::Result<u64> {
+    let mut usage = std::mem::MaybeUninit::<libc::rusage>::uninit();
+    // SAFETY: usage points to writable storage; getrusage initializes it on success.
+    if unsafe { libc::getrusage(libc::RUSAGE_SELF, usage.as_mut_ptr()) } < 0 {
+        return Err(io::Error::last_os_error());
+    }
+    // SAFETY: the successful call initialized the complete structure.
+    let usage = unsafe { usage.assume_init() };
+    let bytes = u64::try_from(usage.ru_maxrss)
+        .map_err(|_| io::Error::other("negative resident memory measurement"))?;
+    #[cfg(target_os = "linux")]
+    let bytes = bytes.saturating_mul(1024);
+    Ok(bytes)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

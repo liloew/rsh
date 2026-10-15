@@ -1,0 +1,5 @@
+while false; do false; done; printf 'while-empty:%s\n' "$?"
+until true; do false; done; printf 'until-empty:%s\n' "$?"
+i=0; while [ "$i" -lt 2 ]; do i=$((i+1)); false; done; printf 'while:%s:%s\n' "$?" "$i"
+i=0; until [ "$i" -eq 2 ]; do i=$((i+1)); false; done; printf 'until:%s:%s\n' "$?" "$i"
+for i in; do printf BAD; done; printf 'for-empty:%s\n' "$?"

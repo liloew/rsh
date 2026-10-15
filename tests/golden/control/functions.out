@@ -1,0 +1,6 @@
+params:2:<>:<b c>:fixture
+shift:1:<b c>
+return:7:2:<outer>:shared
+default:1
+function:overridden
+override-regular

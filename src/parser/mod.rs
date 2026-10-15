@@ -167,6 +167,9 @@ impl Parser<'_> {
                 self.linebreak();
             }
             if self.peek().is_none() || self.stopped(stops, close) {
+                if self.keyword(b"}") && !separated {
+                    return Err(self.error("separator before }"));
+                }
                 break;
             }
             if !separated {
@@ -204,6 +207,62 @@ impl Parser<'_> {
         if depth >= MAX_NESTING {
             return Err(ParseError::NestingLimit);
         }
+        let function_name = match self.peek().map(|t| &t.kind) {
+            Some(TokenKind::Word(Word(parts))) => match parts.as_slice() {
+                [WordPart::Literal(n)]
+                    if valid_name(n)
+                        && ![
+                            b"if".as_slice(),
+                            b"then",
+                            b"elif",
+                            b"else",
+                            b"fi",
+                            b"while",
+                            b"until",
+                            b"do",
+                            b"done",
+                            b"for",
+                            b"in",
+                            b"case",
+                            b"esac",
+                        ]
+                        .contains(&n.as_slice()) =>
+                {
+                    Some(n.clone())
+                }
+                _ => None,
+            },
+            _ => None,
+        };
+        if let Some(name) = function_name
+            && self
+                .tokens
+                .get(self.index + 1)
+                .is_some_and(|t| t.kind == TokenKind::Operator(Op::LeftParen))
+        {
+            if crate::builtins::is_special_name(&name) {
+                return Err(self.error("non-special function name"));
+            }
+            self.advance();
+            self.advance();
+            self.expect_op(Op::RightParen)?;
+            self.linebreak();
+            if !self.op(Op::LeftParen)
+                && ![b"{".as_slice(), b"if", b"while", b"until", b"for", b"case"]
+                    .iter()
+                    .any(|w| self.keyword(w))
+            {
+                return Err(self.error("compound function body"));
+            }
+            let body = self.command(depth + 1)?;
+            let Command::Compound(body, redirs) = body else {
+                return Err(self.error("compound function body"));
+            };
+            return Ok(Command::FunctionDef {
+                name,
+                definition: Function { body, redirs },
+            });
+        }
         let compound = if self.take_op(Op::LeftParen) {
             let body = self.list(&[], Some(Op::RightParen), false, depth + 1)?;
             self.expect_op(Op::RightParen)?;
@@ -232,7 +291,6 @@ impl Parser<'_> {
             }
             Ok(Command::Compound(Box::new(compound), redirs))
         } else {
-            // TODO(M6): NAME '(' ')' compound_command function definitions.
             if [
                 b"then".as_slice(),
                 b"elif",

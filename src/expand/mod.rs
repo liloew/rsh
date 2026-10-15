@@ -91,6 +91,25 @@ pub fn scalar(
 ) -> Result<Vec<u8>, ExpandError> {
     Ok(self::word(word, env, sub, mode)?.join(b" ".as_slice()))
 }
+/// Preserve quote bits through expansion for case and parameter patterns alike.
+pub fn compile_pattern(
+    word: &Word,
+    env: &mut ShellEnv,
+    sub: &mut Substitute<'_>,
+) -> Result<Vec<pattern::Atom>, ExpandError> {
+    let fields = render(&word.0, env, sub, false, Mode::Pattern, 0)?;
+    Ok(pattern::compile(
+        &fields
+            .iter()
+            .flat_map(|f| {
+                f.bytes
+                    .iter()
+                    .filter(|b| !b.empty_quote)
+                    .map(|b| (b.value, b.quoted))
+            })
+            .collect::<Vec<_>>(),
+    ))
+}
 // Pure compatibility helper for conservative descriptor reservation. Never invokes substitutions.
 pub fn basic_word(word: &Word, env: &ShellEnv) -> Result<Vec<u8>, ExpandError> {
     let mut env = env.clone();

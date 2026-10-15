@@ -99,6 +99,26 @@ fn worker(args: Vec<OsString>, background: bool) -> std::io::Result<u8> {
     let mut closed = 0;
     for arg in snapshot.iter().map(|v| OsStr::from_bytes(v)) {
         let bytes = arg.as_bytes();
+        if let Some(v) = bytes.strip_prefix(b"h=") {
+            env.function_depth = std::str::from_utf8(v)
+                .ok()
+                .and_then(|s| s.parse().ok())
+                .unwrap_or(0);
+            continue;
+        }
+        if let Some(v) = bytes.strip_prefix(b"f=") {
+            let tree = parser::parse(v).map_err(|e| std::io::Error::other(e.to_string()))?;
+            if let Some(rsh::ast::Command::FunctionDef { name, definition }) =
+                tree.0.first().and_then(|i| i.and_or.first.commands.first())
+            {
+                env.functions
+                    .insert(name.clone(), std::rc::Rc::new(definition.clone()));
+            } else {
+                return Ok(usage());
+            }
+            continue;
+        }
+
         if let Some(v) = bytes.strip_prefix(b"d=") {
             let p = std::path::PathBuf::from(OsStr::from_bytes(v));
             if !p.is_absolute() {

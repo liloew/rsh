@@ -11,6 +11,8 @@ pub struct Variable {
 
 #[derive(Debug, Clone)]
 pub struct ShellEnv {
+    pub functions: BTreeMap<Vec<u8>, std::rc::Rc<crate::ast::Function>>,
+    pub function_depth: usize,
     pub variables: BTreeMap<Vec<u8>, Variable>,
     /// Absolute logical cwd; the OS cwd is changed only in a forked child.
     pub cwd: PathBuf,
@@ -30,6 +32,8 @@ impl ShellEnv {
     pub fn inherited() -> std::io::Result<Self> {
         let cwd = std::env::current_dir()?;
         let mut env = Self {
+            functions: BTreeMap::new(),
+            function_depth: 0,
             variables: BTreeMap::new(),
             cwd,
             last_status: 0,
@@ -141,6 +145,8 @@ mod tests {
     #[test]
     fn export_flags_survive_assignment_and_unset_export_is_not_empty() {
         let mut env = ShellEnv {
+            functions: BTreeMap::new(),
+            function_depth: 0,
             variables: BTreeMap::new(),
             cwd: PathBuf::from("/"),
             last_status: 0,

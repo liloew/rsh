@@ -85,7 +85,13 @@ pub struct Pipeline {
 pub enum Command {
     Simple(SimpleCommand),
     Compound(Box<CompoundCommand>, Vec<Redirection>),
-    // TODO(M6): function definitions and their attached redirections.
+    FunctionDef { name: Vec<u8>, definition: Function },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Function {
+    pub body: Box<CompoundCommand>,
+    pub redirs: Vec<Redirection>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

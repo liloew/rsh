@@ -1,4 +1,4 @@
-//! Minimal execution builtins, redirection-only exec and M5 set options/positionals.
+//! Minimal execution builtins, M6 control flow and the existing M5 options.
 //! Remaining builtin behavior is TODO(M7).
 use crate::env::{ShellEnv, valid_name};
 use std::os::unix::ffi::OsStrExt;
@@ -6,6 +6,10 @@ use std::path::{Component, Path, PathBuf};
 
 #[derive(Debug, Clone, Copy)]
 pub enum Builtin {
+    Break,
+    Continue,
+    Return,
+    Shift,
     Set,
     Exec,
     Colon,
@@ -19,6 +23,10 @@ pub enum Builtin {
 
 pub fn special(name: &[u8]) -> Option<Builtin> {
     match name {
+        b"break" => Some(Builtin::Break),
+        b"continue" => Some(Builtin::Continue),
+        b"return" => Some(Builtin::Return),
+        b"shift" => Some(Builtin::Shift),
         b"set" => Some(Builtin::Set),
         b"exec" => Some(Builtin::Exec),
         b":" => Some(Builtin::Colon),
@@ -26,6 +34,26 @@ pub fn special(name: &[u8]) -> Option<Builtin> {
         b"export" => Some(Builtin::Export),
         _ => None,
     }
+}
+/// Every POSIX special name is protected, including M7 utilities not implemented yet.
+pub fn is_special_name(name: &[u8]) -> bool {
+    matches!(
+        name,
+        b":" | b"."
+            | b"break"
+            | b"continue"
+            | b"eval"
+            | b"exec"
+            | b"exit"
+            | b"export"
+            | b"readonly"
+            | b"return"
+            | b"set"
+            | b"shift"
+            | b"times"
+            | b"trap"
+            | b"unset"
+    )
 }
 pub fn regular(name: &[u8]) -> Option<Builtin> {
     match name {
@@ -39,6 +67,7 @@ pub fn regular(name: &[u8]) -> Option<Builtin> {
 
 #[derive(Debug, Default)]
 pub struct Outcome {
+    pub flow: Option<crate::exec::Flow>,
     pub status: u8,
     pub stdout: Vec<u8>,
     pub stderr: Vec<u8>,
@@ -51,6 +80,7 @@ impl Outcome {
         stderr.extend_from_slice(message);
         stderr.push(b'\n');
         Self {
+            flow: None,
             status,
             stderr,
             stdout: Vec::new(),
@@ -60,6 +90,8 @@ impl Outcome {
 
 pub fn run(builtin: Builtin, args: &[Vec<u8>], env: &mut ShellEnv) -> Outcome {
     match builtin {
+        Builtin::Break | Builtin::Continue | Builtin::Return => control(builtin, args, env, 0),
+        Builtin::Shift => shift(args, env),
         Builtin::Set => {
             let mut i = 0;
             while let Some(arg) = args.get(i) {
@@ -296,4 +328,93 @@ fn pwd(args: &[Vec<u8>], env: &ShellEnv) -> Outcome {
         stdout,
         ..Outcome::default()
     }
+}
+
+/// Context-sensitive special builtins return typed flow, never unwind the interpreter.
+pub fn control(builtin: Builtin, args: &[Vec<u8>], env: &mut ShellEnv, loops: usize) -> Outcome {
+    use crate::exec::Flow;
+    let error = |env: &mut ShellEnv, name: &[u8]| {
+        env.exit_requested = Some(2);
+        Outcome::error(name, b"positive decimal count required", 2)
+    };
+    match builtin {
+        Builtin::Break | Builtin::Continue => {
+            let name = if matches!(builtin, Builtin::Break) {
+                b"break".as_slice()
+            } else {
+                b"continue"
+            };
+            if args.len() > 1 {
+                return error(env, name);
+            }
+            let n = match args.first() {
+                Some(a) => count(a),
+                None => Some(1),
+            };
+            let Some(n) = n.filter(|n| *n > 0) else {
+                return error(env, name);
+            };
+            if loops == 0 {
+                return Outcome::default();
+            }
+            Outcome {
+                flow: Some(if matches!(builtin, Builtin::Break) {
+                    Flow::Break(n.min(loops))
+                } else {
+                    Flow::Continue(n.min(loops))
+                }),
+                ..Outcome::default()
+            }
+        }
+        Builtin::Return => {
+            if env.function_depth == 0 {
+                return Outcome::error(b"return", b"not in a function or sourced script", 1);
+            }
+            if args.len() > 1 {
+                env.exit_requested = Some(2);
+                return Outcome::error(b"return", b"too many arguments", 2);
+            }
+            let status = if let Some(a) = args.first() {
+                match exit_code(a) {
+                    Some(n) => n,
+                    None => {
+                        env.exit_requested = Some(2);
+                        return Outcome::error(b"return", b"numeric argument required", 2);
+                    }
+                }
+            } else {
+                env.last_status
+            };
+            Outcome {
+                status,
+                flow: Some(Flow::Return(status)),
+                ..Outcome::default()
+            }
+        }
+        _ => Outcome::default(),
+    }
+}
+fn count(bytes: &[u8]) -> Option<usize> {
+    if bytes.is_empty() || !bytes.iter().all(u8::is_ascii_digit) {
+        return None;
+    }
+    Some(bytes.iter().fold(0usize, |n, b| {
+        n.saturating_mul(10).saturating_add(usize::from(b - b'0'))
+    }))
+}
+fn shift(args: &[Vec<u8>], env: &mut ShellEnv) -> Outcome {
+    if args.len() > 1 {
+        return Outcome::error(b"shift", b"too many arguments", 1);
+    }
+    let Some(n) = (match args.first() {
+        Some(a) => count(a),
+        None => Some(1),
+    }) else {
+        return Outcome::error(b"shift", b"nonnegative decimal count required", 1);
+    };
+    if n > env.positional.len() {
+        return Outcome::error(b"shift", b"cannot shift that many", 1);
+    }
+    env.positional.drain(..n);
+    Outcome::default()
 }

@@ -174,10 +174,7 @@ fn all_redirection_forms_and_empty_commands() {
             Err(ParseError::Incomplete(_))
         ));
     }
-    assert!(matches!(
-        parse(b"f() { :; }"),
-        Err(ParseError::Syntax { .. })
-    ));
+    assert!(parse(b"f() { :; }").is_ok());
 }
 
 #[test]
@@ -294,7 +291,17 @@ fn generated(seed: &mut u64, depth: usize) -> Script {
                     ],
                 },
             };
-            commands.push(Command::Compound(Box::new(compound), Vec::new()));
+            commands.push(if next(seed, 4) == 0 {
+                Command::FunctionDef {
+                    name: b"generated_fn".to_vec(),
+                    definition: Function {
+                        body: Box::new(compound),
+                        redirs: Vec::new(),
+                    },
+                }
+            } else {
+                Command::Compound(Box::new(compound), Vec::new())
+            });
         }
         Pipeline {
             negated: next(seed, 2) == 0,
@@ -385,5 +392,42 @@ fn heredoc_ast_roundtrips_nested_groups_pipelines_and_substitutions() {
             parse(source.as_bytes()),
             Err(ParseError::Incomplete(_))
         ));
+    }
+}
+
+#[test]
+fn functions_require_names_compound_bodies_and_complete_headers() {
+    for source in [
+        "f() { :; }",
+        "f ()\nif true; then :; fi >out",
+        "f() ( : )",
+        "f(){ g(){ :; }; g; }",
+        "f(){ cat <<END\nbody\nEND\n} >out",
+    ] {
+        let ast = parse(source.as_bytes()).unwrap();
+        assert_eq!(parse(&ast.to_source_bytes()).unwrap(), ast);
+    }
+    for source in ["f", "f() {", "f()\n", "f() if true; then :;"] {
+        if source != "f" {
+            assert!(
+                matches!(parse(source.as_bytes()), Err(ParseError::Incomplete(_))),
+                "{source}"
+            );
+        }
+    }
+    for source in [
+        "f() word",
+        "'f'() { :; }",
+        "1x() { :; }",
+        "exit() { :; }",
+        "return() { :; }",
+        "f(x) { :; }",
+        "{ (true) }",
+    ] {
+        assert!(
+            matches!(parse(source.as_bytes()), Err(ParseError::Syntax { .. })),
+            "{source}: {:?}",
+            parse(source.as_bytes())
+        );
     }
 }
