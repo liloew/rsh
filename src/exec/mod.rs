@@ -877,6 +877,11 @@ impl Shell {
         Ok(self.expand(word, mode)?.join(b" ".as_slice()))
     }
     fn expand_redirect(&mut self, redir: &Redirection) -> Result<Redirection, ExecError> {
+        if matches!(redir.op, RedirOp::HereString) && !self.env.options.here_strings {
+            return Err(ExecError::Unsupported(
+                "here-strings are disabled (set -o here_strings)",
+            ));
+        }
         let mut r = redir.clone();
         if let RedirOp::HereDoc(doc) = &mut r.op {
             if !doc.quoted {
@@ -885,9 +890,14 @@ impl Shell {
                 doc.quoted = true;
             }
         } else {
-            r.target = Word(vec![WordPart::Literal(
-                self.expand_scalar(&r.target, crate::expand::Mode::Scalar)?,
-            )]);
+            r.target = Word(vec![WordPart::Literal(self.expand_scalar(
+                &r.target,
+                if matches!(r.op, RedirOp::HereString) {
+                    crate::expand::Mode::HereString
+                } else {
+                    crate::expand::Mode::Scalar
+                },
+            )?)]);
         }
         Ok(r)
     }

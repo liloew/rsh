@@ -52,7 +52,11 @@ pub fn prepare(redirs: &[Redirection], env: &ShellEnv) -> FdPlan {
     for redir in redirs {
         let default = if matches!(
             redir.op,
-            RedirOp::Input | RedirOp::DupInput | RedirOp::ReadWrite | RedirOp::HereDoc(_)
+            RedirOp::Input
+                | RedirOp::DupInput
+                | RedirOp::ReadWrite
+                | RedirOp::HereDoc(_)
+                | RedirOp::HereString
         ) {
             0
         } else {
@@ -85,6 +89,17 @@ pub fn prepare(redirs: &[Redirection], env: &ShellEnv) -> FdPlan {
                 continue;
             }
         };
+        if matches!(redir.op, RedirOp::HereString) {
+            let mut body = target;
+            body.push(b'\n');
+            match sys::here_input(&body, floor) {
+                Ok(source) => plan.ops.push(FdOp::Here { fd, source }),
+                Err(error) => plan
+                    .ops
+                    .push(fail(b"here-string".to_vec(), error.to_string().as_bytes())),
+            }
+            continue;
+        }
         if matches!(redir.op, RedirOp::DupInput | RedirOp::DupOutput) {
             plan.ops.push(if target == b"-" {
                 FdOp::Close { fd }

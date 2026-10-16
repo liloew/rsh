@@ -9,6 +9,16 @@ fn integer(s: &[u8]) -> Result<i64, &'static str> {
         .ok_or("integer expression expected")
 }
 fn unary(op: &[u8], s: &[u8], env: &ShellEnv) -> Result<bool, &'static str> {
+    // Joining an empty operand would silently turn it into the current directory.
+    // File predicates must instead test the supplied empty pathname (false).
+    if s.is_empty()
+        && matches!(
+            op,
+            b"-e" | b"-f" | b"-d" | b"-r" | b"-w" | b"-x" | b"-s" | b"-L" | b"-h"
+        )
+    {
+        return Ok(false);
+    }
     let path = env.cwd.join(std::ffi::OsStr::from_bytes(s));
     let meta = std::fs::metadata(&path).ok();
     Ok(match op {

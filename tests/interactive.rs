@@ -85,3 +85,27 @@ fn non_tty_i_falls_back_to_byte_script_input_without_configuration() {
     assert_eq!(out.stdout, [255]);
     assert!(out.stderr.is_empty());
 }
+
+#[test]
+fn nested_startup_syntax_errors_name_the_actual_file_and_line() {
+    let d = TempDir::new();
+    d.fixtures();
+    let config = d.0.join("config/rsh");
+    std::fs::create_dir_all(&config).unwrap();
+    std::fs::write(config.join("config.sh"), b"# config\n. ./nested.sh\n").unwrap();
+    let mut source = "# sourced file\n".repeat(59);
+    source.push_str("if false; then\n  :\n  cat > > word\nfi\n");
+    std::fs::write(d.0.join("nested.sh"), source).unwrap();
+    let mut cmd = d.command(env!("CARGO_BIN_EXE_rsh"));
+    cmd.env("XDG_CONFIG_HOME", d.0.join("config"))
+        .args(["-i", "-c", "echo alive"]);
+    let output = capture(cmd).0;
+    assert!(output.status.success());
+    assert_eq!(output.stdout, b"alive\n");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("nested.sh:62: warning: rsh: line 62:"),
+        "{stderr}"
+    );
+    assert!(!stderr.contains("config.sh:62:"), "{stderr}");
+}

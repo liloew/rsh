@@ -423,6 +423,7 @@ impl Parser<'_> {
                 Op::DupOutput,
                 Op::ReadWrite,
                 Op::Clobber,
+                Op::HereString,
                 Op::HereDoc,
                 Op::HereDocStrip,
             ]
@@ -459,6 +460,7 @@ impl Parser<'_> {
             return Err(self.error("here-document delimiter"));
         }
         let op = match self.peek().map(|t| &t.kind) {
+            Some(TokenKind::Operator(Op::HereString)) => RedirOp::HereString,
             Some(TokenKind::Operator(Op::Less)) => RedirOp::Input,
             Some(TokenKind::Operator(Op::Greater)) => RedirOp::Output,
             Some(TokenKind::Operator(Op::Append)) => RedirOp::Append,

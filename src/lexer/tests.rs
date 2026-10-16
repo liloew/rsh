@@ -17,7 +17,7 @@ fn literal(bytes: &[u8]) -> WordPart {
 
 #[test]
 fn every_operator_and_newline() {
-    let source = b"&& || ;; ; & | ( ) < > << >> <& >& <> <<- >|\n";
+    let source = b"&& || ;; ; & | ( ) < > << >> <& >& <> <<- >| <<<\n";
     let expected = [
         Operator::AndIf,
         Operator::OrIf,
@@ -36,6 +36,7 @@ fn every_operator_and_newline() {
         Operator::ReadWrite,
         Operator::HereDocStrip,
         Operator::Clobber,
+        Operator::HereString,
     ];
     let mut tokens: Vec<_> = expected.into_iter().map(TokenKind::Operator).collect();
     tokens.push(TokenKind::Newline);
@@ -49,8 +50,7 @@ fn every_operator_and_newline() {
             TokenKind::Operator(Operator::Pipe),
             TokenKind::Operator(Operator::DoubleSemicolon),
             TokenKind::Operator(Operator::Semicolon),
-            TokenKind::Operator(Operator::HereDoc),
-            TokenKind::Operator(Operator::Less)
+            TokenKind::Operator(Operator::HereString)
         ]
     );
 }
@@ -559,4 +559,18 @@ fn heredoc_line_joining_respects_backslash_parity() {
         })
         .unwrap();
     assert_eq!(doc.raw, b"leftright\nback\\\\\nnext\n");
+}
+
+#[test]
+fn here_string_is_one_operator_without_a_heredoc_body() {
+    assert_eq!(
+        kinds(b"3<<<x\n"),
+        vec![
+            TokenKind::IoNumber(b"3".to_vec()),
+            TokenKind::Operator(Operator::HereString),
+            word(vec![literal(b"x")]),
+            TokenKind::Newline
+        ]
+    );
+    assert!(lex(b"cat <<< 'word'\n").is_ok());
 }

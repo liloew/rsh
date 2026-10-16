@@ -650,3 +650,34 @@ fn listing_quotes_roundtrip_and_empty_alias() {
     let exported = std::fs::read(d.0.join("vars")).unwrap();
     assert!(rsh::parser::parse(&exported).is_ok());
 }
+
+#[test]
+fn empty_file_test_operands_do_not_resolve_to_current_directory() {
+    let d = setup();
+    let source = "for op in -e -f -d -r -w -x -s -L -h; do test \"$op\" ''; printf '%s:%s\\n' \"$op\" \"$?\"; done; INCLUDE=; if [ -e \"$INCLUDE\" ]; then echo WRONG; else echo no-include; fi";
+    let expected = b"-e:1\n-f:1\n-d:1\n-r:1\n-w:1\n-x:1\n-s:1\n-L:1\n-h:1\nno-include\n";
+    for sh in [env!("CARGO_BIN_EXE_rsh"), "dash", "bash"] {
+        if (sh == "dash" || sh == "bash") && !available(sh) {
+            continue;
+        }
+        let output = run(&d, sh, source);
+        assert!(output.status.success(), "{sh}: {output:?}");
+        assert_eq!(output.stdout, expected, "{sh}");
+        assert!(output.stderr.is_empty(), "{sh}: {output:?}");
+    }
+}
+
+#[test]
+fn portable_fedora_locale_filter_uses_a_pipe_instead_of_here_string() {
+    let d = setup();
+    let source = "LANG=ja_JP.UTF-8; if printf '%s\\n' \"$LANG\" | grep -q -E -i -e '^.+\\.utf-?8$'; then LANG=en_US.UTF-8; fi; printf '%s\\n' \"$LANG\"";
+    for sh in [env!("CARGO_BIN_EXE_rsh"), "dash", "bash"] {
+        if (sh == "dash" || sh == "bash") && !available(sh) {
+            continue;
+        }
+        let out = run(&d, sh, source);
+        assert!(out.status.success(), "{sh}: {out:?}");
+        assert_eq!(out.stdout, b"en_US.UTF-8\n", "{sh}");
+        assert!(out.stderr.is_empty(), "{sh}: {out:?}");
+    }
+}

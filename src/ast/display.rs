@@ -106,6 +106,7 @@ fn redirection<'a>(value: &'a Redirection, out: &mut Vec<u8>, pending: &mut Vec<
         out.extend_from_slice(fd);
     }
     out.extend_from_slice(match &value.op {
+        RedirOp::HereString => b"<<<",
         RedirOp::Input => b"<",
         RedirOp::Output => b">",
         RedirOp::Append => b">>",

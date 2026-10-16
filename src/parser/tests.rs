@@ -431,3 +431,21 @@ fn functions_require_names_compound_bodies_and_complete_headers() {
         );
     }
 }
+
+#[test]
+fn here_string_ast_roundtrips_and_missing_operand_is_incomplete() {
+    for source in [
+        "cat <<< hi",
+        "cat 3<<<\"$x\" <&3",
+        "{ cat; } <<< $(printf hi)",
+        "cat <<< one <<EOF\ntwo\nEOF\n",
+    ] {
+        let tree = parse(source.as_bytes()).unwrap();
+        assert_eq!(parse(&tree.to_source_bytes()).unwrap(), tree);
+    }
+    assert!(matches!(parse(b"cat <<<"), Err(ParseError::Incomplete(_))));
+    assert!(matches!(
+        parse(b"cat <<< ;"),
+        Err(ParseError::Syntax { .. })
+    ));
+}

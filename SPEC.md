@@ -53,7 +53,7 @@ Key design rules:
 Follow POSIX token recognition (section 2.3 of the standard):
 
 1. Input is read as bytes. Treat as UTF-8 where possible, but do not require valid UTF-8 for words or filenames (use `OsString`/byte strings internally).
-2. Operators: `&& || ;; ; & | ( ) < > << >> <& >& <> <<- >|` and newline.
+2. Operators: `&& || ;; ; & | ( ) < > << >> <& >& <> <<- >|` and newline. The explicitly authorized non-POSIX `<<<` extension is recognized as one operator (section 6.1).
 3. Quoting: backslash, single quotes, double quotes. Inside double quotes `$`, `` ` ``, `\`, and `"` keep special meaning per POSIX.
 4. Expansions recognized by the lexer as parts of a word: `$name`, `${...}`, `$(...)`, `` `...` ``, `$((...))`.
 5. Comments: `#` at the start of a word to end of line.
@@ -103,7 +103,8 @@ assignment       = NAME "=" [ WORD ] ;        (* only before the command name *)
 
 redirection      = [ IO_NUMBER ] redir_op WORD
                  | [ IO_NUMBER ] ( "<<" | "<<-" ) HEREDOC_DELIM ;
-redir_op         = "<" | ">" | ">>" | ">|" | "<&" | ">&" | "<>" ;
+redir_op         = "<" | ">" | ">>" | ">|" | "<&" | ">&" | "<>"
+                 | "<<<" ;  (* non-POSIX extension: section 6.1 *)
 
 separator_op     = "&" | ";" ;
 separator        = separator_op linebreak | newline_list ;
@@ -178,6 +179,31 @@ M5 execution details:
 - **Redirection errors (M4)**: the command is not executed; diagnostics use `rsh: <path-or-fd>: <reason>`. Status is 1 for ordinary commands and 2 for special builtins. A direct special-builtin redirection error aborts the non-interactive shell, with parent descriptors restored before returning.
 - **`set -e` (errexit)**, `-u` (nounset), `-x` (xtrace), `-f` (noglob), `-n` (noexec), `-o pipefail`: implement with POSIX exceptions for `errexit` (not triggered in `if`/`while` conditions, `&&`/`||` non-final commands, or `!` pipelines).
 - **`trap`**: `EXIT` and signal traps; run in the shell's context.
+
+### 6.1 Here-string extension (`<<<`)
+
+On explicit user request, support `[IO_NUMBER] <<< WORD`. It is a single,
+longest-match lexer operator; its operand remains a structured word in the AST.
+Execution performs tilde/parameter/command/arithmetic expansion and quote removal,
+without field splitting or pathname expansion. One newline is appended, even for
+an empty operand or one already ending in newline. `$@` fields are joined with
+spaces (including quoted `$@`); `$*` retains its usual IFS joining. This follows
+bash --posix here-string behavior, not POSIX grammar (dash does not support it).
+
+Input defaults to fd 0; explicit fd selection and left-to-right redirection order
+apply as usual. Builtins/groups/functions restore their original descriptors.
+The existing here-document transport supplies a prefilled pipe for small inputs
+and an immediately unlinked temporary file for larger ones, including unused
+inputs. AST Display, worker serialization and nested command substitutions retain
+`<<<` without ever queuing a here-document delimiter/body.
+
+The named option `here_strings` defaults on for Fedora login-profile compatibility
+as requested. `set +o here_strings` rejects execution of this redirection before
+expanding its operand; `set -o here_strings` (also accepted at startup) enables it.
+Workers preserve the option. Grammar recognition remains enabled with the option
+off, including -n and unexecuted branches; it is an execution gate, not a claim of
+a strict POSIX parser mode. Only this explicitly requested extension is included;
+other M11 features remain untouched.
 
 ## 7. Builtins
 
@@ -356,6 +382,7 @@ Each milestone is done only when its tests pass and `cargo clippy -- -D warnings
     suppression, safe bounded file reads, terminal sanitizing, and PTY coverage.
 - [ ] **M10 Conformance pass**: run the ported Oils spec-test cases and differential fuzzing; fix or document every deviation.
 - [ ] **M11 Optional extensions** (each behind a flag/option): arrays, `[[ ]]`, `local`, `function` keyword, `{a,b}` brace expansion, `<(...)`, `pipefail` default, `select`, `**` globstar.
+  - [x] **Requested adjunct: here-strings** (`here_strings` option): lexer/AST, expansion, ordered redirection, large inputs and Bash differential coverage.
 
 ## 11. Test strategy
 
@@ -588,3 +615,33 @@ M10 progress (not yet complete):
   No golden output files were changed. The new 750-case spec run passes with
   no unexpected or stale failures; the complete two-reference verification also
   passes under the recorded versions. M10 remains unchecked.
+
+- Fedora login-profile regression: file predicates given an empty pathname must
+  return false rather than joining it to cwd. Affected predicates include -e,
+  -d, -r, -w, -x and -s; all supported file predicates have a three-shell
+  regression. This fixes colorls.sh taking its INCLUDE-file branch for an empty
+  INCLUDE. Nested sourced startup files now report their own path and absolute
+  physical syntax-error line; the startup-failure summary retains the innermost
+  failing file's context instead of attaching its line to the parent filename.
+- Fedora 44's supplied lang.sh uses the non-POSIX <<< here-string operator.
+  The initial login fix deliberately rejected it; a subsequent explicit user
+  request authorizes the here_strings extension in section 6.1. The original
+  Fedora locale test now runs unchanged under rsh and bash --posix. The portable
+  printf-to-grep alternative remains tested against all three shells.
+- Validation of this login regression fix: fmt/check and all-target Clippy
+  -D warnings pass; full cargo test passes (182 passed, 12 existing ignored
+  helper/benchmark entries). Three new regressions cover empty file predicates
+  against both references, nested startup error locations, and the portable
+  locale-filter replacement. Remote Fedora deployment/retest is not claimed.
+
+- Here-string validation: fmt/check, all-target Clippy -D warnings and full
+  cargo test pass (187 passed, 12 existing ignored helper/benchmark entries).
+  New coverage includes longest-match lexing, parser round-trips/incomplete input,
+  an independently authored redirect Golden fixture, bash --posix differential
+  execution (including the reported Fedora locale predicate), IFS-sensitive
+  positional parameters, fd/order/compound/pipeline behavior, >1 MiB input and
+  unused input, plus disabled-option inheritance into workers. Lexer/parser
+  fuzz corpora include the new syntax. The old startup-location negative test
+  now uses genuinely invalid `> >` syntax instead of the newly supported `<<<`.
+  No existing Golden stdout was regenerated, no dependency or unsafe code was
+  added, and remote Fedora deployment remains unverified.

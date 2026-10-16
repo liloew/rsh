@@ -67,6 +67,7 @@ pub enum Mode {
     Scalar,
     Assignment,
     HereDoc,
+    HereString,
     Pattern,
 }
 pub fn word(
@@ -227,7 +228,9 @@ fn render(
                     ParamExpr::Name(n) | ParamExpr::Braced(n) => n.clone(),
                     ParamExpr::Special(c) => vec![*c],
                 };
-                if (expr == b"@" || expr == b"*" && !quoted) && mode == Mode::Argument {
+                if (expr == b"@" && matches!(mode, Mode::Argument | Mode::HereString))
+                    || (expr == b"*" && !quoted && mode == Mode::Argument)
+                {
                     let values = env.positional.clone();
                     for (i, value) in values.iter().enumerate() {
                         if i > 0 {

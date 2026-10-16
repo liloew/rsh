@@ -82,7 +82,7 @@ impl Shell {
         let Some(path) = builtin_impl::misc::find(name, &self.env, false, false) else {
             return Err(ExecError::Unsupported(".: file not found"));
         };
-        let source = std::fs::read(path)?;
+        let source = std::fs::read(&path)?;
         if self.env.source_depth >= 64 {
             return Err(ExecError::Unsupported("source nesting limit exceeded"));
         }
@@ -94,9 +94,17 @@ impl Shell {
         } else {
             None
         };
+        let startup_context = self.startup_context.clone();
+        if startup_context.is_some() {
+            self.startup_context = Some(path);
+        }
         self.env.source_depth += 1;
         let flow = self.source_flow(&source);
         self.env.source_depth -= 1;
+        // Preserve the failing inner file until startup emits its final summary.
+        if !matches!(flow, Flow::Exit(_)) {
+            self.startup_context = startup_context;
+        }
         if let Some(saved) = saved {
             self.env.positional = saved;
         }
@@ -244,6 +252,14 @@ impl Shell {
                     };
                     self.env
                         .set(b"LINENO".to_vec(), line.to_string().into_bytes());
+                    // Parser tokens refer to the current input chunk; diagnostics
+                    // must use its physical offset in the complete source file.
+                    let e = match e {
+                        crate::parser::ParseError::Syntax { col, token, .. } => {
+                            crate::parser::ParseError::Syntax { line, col, token }
+                        }
+                        other => other,
+                    };
                     let message = if let Some(path) = &self.startup_context {
                         format!("rsh: {}:{line}: warning: {e}\n", path.display())
                     } else {

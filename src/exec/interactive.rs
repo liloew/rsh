@@ -99,14 +99,17 @@ impl Shell {
                 self.env.source_depth += 1;
                 let flow = self.source_flow(&source);
                 self.env.source_depth -= 1;
-                self.startup_context = None;
+                let context = self
+                    .startup_context
+                    .take()
+                    .unwrap_or_else(|| path.to_path_buf());
                 if matches!(flow, Flow::Exit(_)) {
                     let line = String::from_utf8_lossy(self.env.get(b"LINENO").unwrap_or(b"1"));
                     let _ = sys::write_fd(
                         2,
                         format!(
                             "rsh: {}:{line}: warning: startup file failed (status {})\n",
-                            path.display(),
+                            context.display(),
                             flow.status()
                         )
                         .as_bytes(),

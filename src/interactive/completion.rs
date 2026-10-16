@@ -212,6 +212,7 @@ fn command_context(before: &str) -> (bool, Vec<String>) {
                 | Operator::DupOutput
                 | Operator::ReadWrite
                 | Operator::HereDoc
+                | Operator::HereString
                 | Operator::HereDocStrip,
             ) => {
                 target = true;

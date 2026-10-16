@@ -1,0 +1,6 @@
+cat <<<"$x $(printf hi) $((2+3))" | cat
+f(){ cat 3<<<"$@" <&3; }; f a b
+cat <<<"$(cat <<END
+nested
+END
+)"

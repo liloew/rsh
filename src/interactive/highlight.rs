@@ -90,6 +90,7 @@ pub fn classify(line: &str, known: impl Fn(&str) -> bool) -> Vec<Kind> {
                         | Operator::DupOutput
                         | Operator::ReadWrite
                         | Operator::HereDoc
+                        | Operator::HereString
                         | Operator::HereDocStrip
                 ) {
                     target = true;

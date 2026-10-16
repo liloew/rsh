@@ -48,6 +48,7 @@ pub enum Operator {
     Less,
     Greater,
     HereDoc,
+    HereString,
     Append,
     DupInput,
     DupOutput,
@@ -57,6 +58,7 @@ pub enum Operator {
 }
 
 const OPERATORS: &[(&[u8], Operator)] = &[
+    (b"<<<", Operator::HereString),
     (b"<<-", Operator::HereDocStrip),
     (b"&&", Operator::AndIf),
     (b"||", Operator::OrIf),

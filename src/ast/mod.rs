@@ -147,6 +147,7 @@ pub enum RedirOp {
     ReadWrite,
     Clobber,
     HereDoc(Box<HereDoc>),
+    HereString,
 }
 /// The lexer collects bytes; execution expands `parts` for unquoted delimiters.
 #[derive(Debug, Clone, PartialEq, Eq)]

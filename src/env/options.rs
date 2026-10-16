@@ -2,6 +2,7 @@
 use super::ShellEnv;
 #[derive(Debug, Clone)]
 pub struct Options {
+    pub here_strings: bool,
     pub vi: bool,
     pub git_prompt: bool,
     pub monitor: bool,
@@ -17,6 +18,7 @@ pub struct Options {
 impl Default for Options {
     fn default() -> Self {
         Self {
+            here_strings: true,
             vi: false,
             git_prompt: false,
             monitor: false,
@@ -32,6 +34,7 @@ impl Default for Options {
     }
 }
 pub const NAMES: &[&str] = &[
+    "here_strings",
     "vi",
     "git_prompt",
     "monitor",
@@ -47,6 +50,7 @@ pub const NAMES: &[&str] = &[
 impl ShellEnv {
     pub fn option(&self, name: &str) -> Option<bool> {
         Some(match name {
+            "here_strings" => self.options.here_strings,
             "vi" => self.options.vi,
             "git_prompt" => self.options.git_prompt,
             "monitor" => self.options.monitor,
@@ -63,6 +67,7 @@ impl ShellEnv {
     }
     pub fn set_option(&mut self, name: &str, value: bool) -> bool {
         match name {
+            "here_strings" => self.options.here_strings = value,
             "vi" => self.options.vi = value,
             "git_prompt" => self.options.git_prompt = value,
             "monitor" => self.options.monitor = value,
