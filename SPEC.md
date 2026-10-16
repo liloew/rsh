@@ -483,3 +483,18 @@ M10 progress (not yet complete):
   prevented valid forks; the test helper now caps it at 1024 (or the existing hard
   limit). CPU/file limits apply on both platforms; Linux additionally caps address
   space. No M10 completion checkbox is checked and no M11 work is introduced.
+- Step 2 adds 845 original POSIX-derived matrix cases (847 with the bootstrap
+  cases), with a checked-in deterministic authoring source. Coverage counts:
+  quoting 52; reserved words/aliases 30; parameters 60; expansion 120;
+  splitting/globbing 70; redirections/heredocs 70; status/errors 40; commands 80;
+  syntax 30; builtins 120; options 45; non-interactive jobs/signals 30.
+  No Oils code or tests were copied. All areas were reference-verified before
+  using rsh results: 1,689 reference passes, five explicit dash pipefail skips.
+- Reference decisions: POSIX 2.6.4/C arithmetic short-circuiting excludes an
+  unreachable division by zero. Apple bash 3.2 instead reports that division;
+  five arithmetic precedence cases retain the normative dash output and an
+  explicit bash alternative. pipefail cases are tagged as extensions and skip
+  Apple dash-16, which lacks the option. command -v failure status is only
+  required to be nonzero, so unalias tests inspect success/failure rather than
+  assuming bash's status 1 (dash returns 127). Pattern fixtures use a dedicated
+  subdirectory so the runner's script/HOME files cannot contaminate matches.
