@@ -56,6 +56,22 @@ thread_local! {
     static BACKUPS: RefCell<Vec<Weak<RefCell<OwnedFd>>>> = const {RefCell::new(Vec::new())};
 }
 
+/// A shell-private descriptor participates in the same relocation registry as
+/// restoration backups, so explicit user fd redirections cannot expose it.
+pub struct HiddenFd(Rc<RefCell<OwnedFd>>);
+impl HiddenFd {
+    pub fn new(fd: OwnedFd) -> io::Result<Self> {
+        let slot = Rc::new(RefCell::new(duplicate_above(fd.as_raw_fd(), 10)?));
+        BACKUPS.with(|registry| registry.borrow_mut().push(Rc::downgrade(&slot)));
+        Ok(Self(slot))
+    }
+}
+impl AsRawFd for HiddenFd {
+    fn as_raw_fd(&self) -> RawFd {
+        self.0.borrow().as_raw_fd()
+    }
+}
+
 impl FdPlan {
     /// Parent-only: move hidden backups away from descriptors explicitly accessed
     /// by this operation. This also protects dynamically expanded fd operands.

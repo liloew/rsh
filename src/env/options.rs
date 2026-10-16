@@ -2,6 +2,7 @@
 use super::ShellEnv;
 #[derive(Debug, Clone, Default)]
 pub struct Options {
+    pub monitor: bool,
     pub errexit: bool,
     pub nounset: bool,
     pub xtrace: bool,
@@ -12,6 +13,7 @@ pub struct Options {
     pub expand_aliases: bool,
 }
 pub const NAMES: &[&str] = &[
+    "monitor",
     "errexit",
     "nounset",
     "xtrace",
@@ -24,6 +26,7 @@ pub const NAMES: &[&str] = &[
 impl ShellEnv {
     pub fn option(&self, name: &str) -> Option<bool> {
         Some(match name {
+            "monitor" => self.options.monitor,
             "errexit" => self.options.errexit,
             "nounset" => self.options.nounset,
             "xtrace" => self.options.xtrace,
@@ -37,6 +40,7 @@ impl ShellEnv {
     }
     pub fn set_option(&mut self, name: &str, value: bool) -> bool {
         match name {
+            "monitor" => self.options.monitor = value,
             "errexit" => self.options.errexit = value,
             "nounset" => self.options.nounset = value,
             "xtrace" => self.options.xtrace = value,
@@ -51,6 +55,7 @@ impl ShellEnv {
     }
     pub fn set_flag(&mut self, flag: u8, value: bool) -> bool {
         let name = match flag {
+            b'm' => "monitor",
             b'e' => "errexit",
             b'u' => "nounset",
             b'x' => "xtrace",
@@ -72,6 +77,7 @@ impl ShellEnv {
     pub fn option_letters(&self) -> Vec<u8> {
         let mut s = Vec::new();
         for (c, on) in [
+            (b'm', self.options.monitor),
             (b'e', self.options.errexit),
             (b'u', self.options.nounset),
             (b'x', self.options.xtrace),

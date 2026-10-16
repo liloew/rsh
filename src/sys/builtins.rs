@@ -6,6 +6,7 @@ use std::os::unix::ffi::OsStrExt;
 use std::sync::atomic::{AtomicU64, Ordering};
 static PENDING: AtomicU64 = AtomicU64::new(0);
 static IGNORED: AtomicU64 = AtomicU64::new(0);
+static WATCH_CHILDREN: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 extern "C" fn caught(signal: i32) {
     if (1..64).contains(&signal) {
         PENDING.fetch_or(1u64 << (signal as u32), Ordering::Relaxed);
@@ -81,19 +82,24 @@ pub fn trap_signal(n: i32, action: Option<&[u8]>) -> io::Result<()> {
     if n == libc::SIGKILL || n == libc::SIGSTOP {
         return Err(io::Error::other("signal cannot be trapped"));
     }
-    // SAFETY: sigaction is initialized and no pointers escape; caught performs only a
-    // lock-free atomic operation on the supported 64-bit Linux/macOS targets.
-    unsafe {
-        let mut sa: libc::sigaction = std::mem::zeroed();
-        libc::sigemptyset(&mut sa.sa_mask);
-        sa.sa_sigaction = match action {
-            None => libc::SIG_DFL,
-            Some(b"") if n != libc::SIGCHLD => libc::SIG_IGN,
-            Some(b"") => caught as *const () as usize,
-            Some(_) => caught as *const () as usize,
-        };
-        if libc::sigaction(n, &sa, std::ptr::null_mut()) < 0 {
-            return Err(io::Error::last_os_error());
+    if n != libc::SIGCHLD || !WATCH_CHILDREN.load(Ordering::Relaxed) {
+        // SAFETY: sigaction is initialized and no pointers escape; caught performs only a
+        // lock-free atomic operation on the supported 64-bit Linux/macOS targets.
+        unsafe {
+            let mut sa: libc::sigaction = std::mem::zeroed();
+            libc::sigemptyset(&mut sa.sa_mask);
+            sa.sa_sigaction = match action {
+                None if n == libc::SIGCHLD && WATCH_CHILDREN.load(Ordering::Relaxed) => {
+                    caught as *const () as usize
+                }
+                None => libc::SIG_DFL,
+                Some(b"") if n != libc::SIGCHLD => libc::SIG_IGN,
+                Some(b"") => caught as *const () as usize,
+                Some(_) => caught as *const () as usize,
+            };
+            if libc::sigaction(n, &sa, std::ptr::null_mut()) < 0 {
+                return Err(io::Error::last_os_error());
+            }
         }
     }
     if (1..64).contains(&n) {
@@ -202,6 +208,15 @@ pub fn replace_process(process: &PreparedProcess) -> u8 {
         if libc::chdir(process.cwd.as_ptr()) < 0 {
             return 126;
         }
+        if let Err(failure) = process.redirects.apply() {
+            process.redirects.report(failure);
+            return process.redirection_status;
+        }
+        for fd in process.redirects.resource_fds() {
+            if !process.redirects.inherited(fd) {
+                libc::close(fd);
+            }
+        }
         let mut permission = false;
         for path in paths {
             libc::execve(path.as_ptr(), argv.as_ptr(), env.as_ptr());
@@ -223,14 +238,6 @@ static INHERITED: AtomicU64 = AtomicU64::new(0);
 pub fn capture_inherited_ignored() {
     let mut mask = 0;
     for &(n, _) in SIGNALS {
-        if n == libc::SIGCHLD {
-            // SAFETY: shells must retain waitable child statuses even if their invoker
-            // ignored CHLD; internal snapshots reinstall an explicit trap below.
-            unsafe {
-                libc::signal(n, libc::SIG_DFL);
-            }
-            continue;
-        }
         if n == libc::SIGPIPE {
             continue;
         }
@@ -241,9 +248,70 @@ pub fn capture_inherited_ignored() {
                 && action.sa_sigaction == libc::SIG_IGN
             {
                 mask |= 1u64 << (n as u32);
+                if n == libc::SIGCHLD {
+                    // A caught no-op preserves waitable statuses without permitting
+                    // a user action for an inherited ignored CHLD disposition.
+                    action.sa_sigaction = caught as *const () as usize;
+                    action.sa_flags = 0;
+                    libc::sigaction(n, &action, std::ptr::null_mut());
+                }
             }
         }
     }
     INHERITED.store(mask, Ordering::Relaxed);
     IGNORED.fetch_or(mask, Ordering::Relaxed);
+}
+/// Consume the shell's cooperative SIGINT flag without discarding other traps.
+pub fn take_interrupt() -> bool {
+    PENDING.fetch_and(!(1u64 << (libc::SIGINT as u32)), Ordering::Relaxed)
+        & (1u64 << (libc::SIGINT as u32))
+        != 0
+}
+
+pub fn inherited_ignored(signal: i32) -> bool {
+    (1..64).contains(&signal) && INHERITED.load(Ordering::Relaxed) & (1u64 << (signal as u32)) != 0
+}
+pub fn pending_signal_mask() -> u64 {
+    PENDING.load(Ordering::Relaxed)
+}
+
+pub(super) fn enable_child_watch() -> io::Result<()> {
+    if !WATCH_CHILDREN.load(Ordering::Relaxed) {
+        // SAFETY: the handler only updates a lock-free atomic flag. It captures no
+        // heap-owned state, runs no interpreter, allocates nothing and never locks.
+        // Registration persists for this process; exec resets it in every worker.
+        unsafe {
+            signal_hook::low_level::register(libc::SIGCHLD, || {
+                PENDING.fetch_or(1u64 << (libc::SIGCHLD as u32), Ordering::Relaxed);
+            })?;
+            // signal-hook installs SA_RESTART. Idle terminal reads must wake so
+            // notifications are emitted in shell context, not delayed until input.
+            let mut action: libc::sigaction = std::mem::zeroed();
+            if libc::sigaction(libc::SIGCHLD, std::ptr::null(), &mut action) < 0 {
+                return Err(io::Error::last_os_error());
+            }
+            action.sa_flags &= !libc::SA_RESTART;
+            if libc::sigaction(libc::SIGCHLD, &action, std::ptr::null_mut()) < 0 {
+                return Err(io::Error::last_os_error());
+            }
+        }
+        WATCH_CHILDREN.store(true, Ordering::Relaxed);
+    }
+    Ok(())
+}
+pub(super) fn allow_interactive_traps() {
+    // Interactive shells may change the startup dispositions of job-control signals.
+    let mut bits = 0u64;
+    for n in [
+        libc::SIGINT,
+        libc::SIGQUIT,
+        libc::SIGTSTP,
+        libc::SIGTTIN,
+        libc::SIGTTOU,
+        libc::SIGCHLD,
+    ] {
+        bits |= 1u64 << (n as u32);
+    }
+    INHERITED.fetch_and(!bits, Ordering::Relaxed);
+    IGNORED.fetch_and(!bits, Ordering::Relaxed);
 }

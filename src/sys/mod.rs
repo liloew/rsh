@@ -1,6 +1,8 @@
 //! Safe process wrappers. Every child path after fork is allocation/lock free.
 mod builtins;
+mod jobs;
 pub use builtins::*;
+pub use jobs::*;
 
 use nix::{errno::Errno, libc};
 use std::ffi::{CString, c_char};
@@ -17,7 +19,7 @@ pub enum PrepareError {
 
 mod fd;
 pub use fd::{
-    FdGuard, FdOp, FdPlan, OpenMode, capture_file, close_stdio, closed_stdio, here_input,
+    FdGuard, FdOp, FdPlan, HiddenFd, OpenMode, capture_file, close_stdio, closed_stdio, here_input,
     read_worker_source, user_home, write_fd,
 };
 
@@ -47,6 +49,10 @@ enum Action {
 #[derive(Clone, Copy, Default)]
 pub struct SpawnOptions {
     pub detached: bool,
+    /// Some(0) creates one new group for the complete pipeline.
+    pub pgid: Option<i32>,
+    pub foreground_fd: Option<RawFd>,
+    pub job_signals: bool,
     pub null_stdin: bool,
     pub ignore_int_quit: bool,
 }
@@ -121,6 +127,9 @@ impl PreparedProcess {
             },
         })
     }
+    pub fn protect_resources(&self) -> io::Result<()> {
+        self.redirects.protect_backups()
+    }
     pub fn with_redirects(mut self, plan: FdPlan, status: u8) -> Self {
         self.redirects.ops.extend(plan.ops);
         self.redirection_status = status;
@@ -155,11 +164,17 @@ impl Child {
     pub fn wait(self) -> io::Result<u8> {
         wait(self.pid, false)?.ok_or_else(|| io::Error::other("waitpid returned no status"))
     }
+    pub fn wait_kind(self) -> io::Result<ProcessEvent> {
+        wait_kind(self.pid, false)?.ok_or_else(|| io::Error::other("waitpid returned no status"))
+    }
     pub fn try_wait(&self) -> io::Result<Option<u8>> {
         wait(self.pid, true)
     }
 }
 fn wait(pid: libc::pid_t, nonblocking: bool) -> io::Result<Option<u8>> {
+    Ok(wait_kind(pid, nonblocking)?.map(ProcessEvent::status))
+}
+fn wait_kind(pid: libc::pid_t, nonblocking: bool) -> io::Result<Option<ProcessEvent>> {
     loop {
         let mut status = 0;
         // SAFETY: status is writable; pid is a child handle; waitpid is retried on EINTR.
@@ -181,10 +196,10 @@ fn wait(pid: libc::pid_t, nonblocking: bool) -> io::Result<Option<u8>> {
             return Err(error);
         }
         if libc::WIFEXITED(status) {
-            return Ok(Some(libc::WEXITSTATUS(status) as u8));
+            return Ok(Some(ProcessEvent::Exited(libc::WEXITSTATUS(status) as u8)));
         }
         if libc::WIFSIGNALED(status) {
-            return Ok(Some((128 + libc::WTERMSIG(status)) as u8));
+            return Ok(Some(ProcessEvent::Signaled(libc::WTERMSIG(status))));
         }
     }
 }
@@ -225,6 +240,17 @@ pub fn spawn_pipeline(
                 .flat_map(|process| process.redirects.resource_fds()),
         )
         .collect();
+    let gate = if options.pgid.is_some() {
+        Some(nix::unistd::pipe()?)
+    } else {
+        None
+    };
+    let ready = if gate.is_some() {
+        Some(nix::unistd::pipe()?)
+    } else {
+        None
+    };
+    let mut options = options;
     let mut children: Vec<Child> = Vec::new();
     for (i, process) in processes.iter().enumerate() {
         let input = i
@@ -237,7 +263,16 @@ pub fn spawn_pipeline(
         // locks or unwinds; it uses only async-signal-safe calls and prebuilt buffers.
         let pid = unsafe { libc::fork() };
         if pid == 0 {
-            child_run(process, input, output, &fds, options);
+            child_run(
+                process,
+                input,
+                output,
+                &fds,
+                options,
+                gate.as_ref().zip(ready.as_ref()).map(|((r, w), (rr, rw))| {
+                    (r.as_raw_fd(), w.as_raw_fd(), rr.as_raw_fd(), rw.as_raw_fd())
+                }),
+            );
         }
         if pid < 0 {
             let error = io::Error::last_os_error();
@@ -254,20 +289,52 @@ pub fn spawn_pipeline(
             }
             return Err(error);
         }
+        if options.pgid == Some(0) {
+            options.pgid = Some(pid);
+        }
         // SAFETY: keep foreground children in the inherited group; detached workers get
         // their own group. Both parent and child call setpgid to close the race.
         unsafe {
             libc::setpgid(
                 pid,
-                if options.detached {
-                    pid
-                } else {
-                    libc::getpgrp()
-                },
+                options.pgid.unwrap_or_else(|| {
+                    if options.detached {
+                        pid
+                    } else {
+                        libc::getpgrp()
+                    }
+                }),
             );
         }
         children.push(Child { pid });
     }
+    // Every child has joined the group and reset signals before the terminal
+    // becomes foreground. The release gate keeps even instant exits alive.
+    if let Some((read, write)) = ready {
+        drop(write);
+        for _ in &children {
+            loop {
+                match read_byte(read.as_raw_fd()) {
+                    Ok(Some(_)) => break,
+                    Err(e) if e.kind() == io::ErrorKind::Interrupted => continue,
+                    _ => break,
+                }
+            }
+        }
+    }
+    if let (Some(fd), Some(group)) = (options.foreground_fd, options.pgid)
+        && let Err(error) = foreground_group(fd, group)
+    {
+        for child in &children {
+            let _ = send_signal(child.pid, libc::SIGKILL);
+        }
+        drop(gate);
+        for child in children {
+            let _ = child.wait();
+        }
+        return Err(error);
+    }
+    drop(gate);
     // All parent pipe ends close before waiting, including failure paths through RAII.
     Ok(children)
 }
@@ -278,13 +345,19 @@ fn child_run(
     output: Option<RawFd>,
     fds: &[RawFd],
     options: SpawnOptions,
+    gate: Option<(RawFd, RawFd, RawFd, RawFd)>,
 ) -> ! {
     // SAFETY: this block is the complete post-fork path. Pointers refer to immutable,
     // pre-fork-owned, NUL-terminated data; fd numbers are live until explicitly closed.
     // All libc calls below are async-signal-safe; no Rust allocation, formatting,
     // destructor, stdio lock, or panic-capable indexing occurs on this path.
     unsafe {
-        libc::setpgid(0, if options.detached { 0 } else { libc::getpgrp() });
+        libc::setpgid(
+            0,
+            options
+                .pgid
+                .unwrap_or_else(|| if options.detached { 0 } else { libc::getpgrp() }),
+        );
         let mut action: libc::sigaction = std::mem::zeroed();
         libc::sigemptyset(&mut action.sa_mask);
         for signal in [
@@ -298,7 +371,7 @@ fn child_run(
             libc::SIGTTOU,
             libc::SIGCHLD,
         ] {
-            action.sa_sigaction = if ignored_signal(signal)
+            action.sa_sigaction = if (!options.job_signals && ignored_signal(signal))
                 || options.ignore_int_quit && (signal == libc::SIGINT || signal == libc::SIGQUIT)
             {
                 libc::SIG_IGN
@@ -310,6 +383,25 @@ fn child_run(
         let mut mask = std::mem::zeroed();
         libc::sigemptyset(&mut mask);
         libc::sigprocmask(libc::SIG_SETMASK, &mask, std::ptr::null_mut());
+        if let Some((read, write, ready_read, ready_write)) = gate {
+            libc::close(ready_read);
+            let byte = 1u8;
+            while libc::write(ready_write, (&byte as *const u8).cast(), 1) < 0 {
+                if Errno::last_raw() != libc::EINTR {
+                    libc::_exit(1);
+                }
+            }
+            libc::close(ready_write);
+            libc::close(write);
+            let mut byte = 0u8;
+            loop {
+                let n = libc::read(read, (&mut byte as *mut u8).cast(), 1);
+                if n == 0 || (n < 0 && Errno::last_raw() != libc::EINTR) {
+                    break;
+                }
+            }
+            libc::close(read);
+        }
         if let Some(fd) = input
             && libc::dup2(fd, 0) < 0
         {

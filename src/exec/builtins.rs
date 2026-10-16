@@ -22,6 +22,7 @@ impl Shell {
                 }
                 match PreparedProcess::external(args, &env.exported(), &env.cwd, env.get(b"PATH")) {
                     Ok(p) => {
+                        sys::reset_shell_signals();
                         let status = sys::replace_process(&p);
                         self.env.exit_requested = Some(status);
                         Ok(Flow::Exit(status))
@@ -29,6 +30,10 @@ impl Shell {
                     Err(e) => Err(e.into()),
                 }
             }
+            Builtin::Jobs | Builtin::Fg | Builtin::Bg | Builtin::Disown => {
+                return self.jobs_builtin(builtin, args);
+            }
+            Builtin::Kill => return self.kill_builtin(args),
             Builtin::Wait => return self.wait_builtin(args),
             Builtin::Type | Builtin::Command => return self.command_builtin(builtin, args),
             _ => Ok(Flow::Status(0)),
@@ -77,9 +82,35 @@ impl Shell {
         let mut source = Vec::new();
         let mut base = 0;
         let mut flow = Flow::Status(0);
+        let _ = self.monitor();
+        let mut prompted = false;
         loop {
+            if self.env.options.interactive && source.is_empty() && !prompted {
+                if self.env.options.monitor && self.terminal.is_some() {
+                    self.notify_jobs();
+                }
+                let _ = self.signals_between_commands();
+                let _ = sys::write_fd(2, self.env.get(b"PS1").unwrap_or(b"$ "));
+                prompted = true;
+            }
             let next = match sys::read_byte(0) {
                 Ok(b) => b,
+                Err(e) if e.kind() == std::io::ErrorKind::Interrupted => {
+                    let notified =
+                        self.env.options.monitor && self.terminal.is_some() && self.notify_jobs();
+                    let pending = sys::pending_signal_mask();
+                    let trapped = self.env.traps.iter().any(|(n, a)| {
+                        *n > 0 && *n < 64 && pending & (1u64 << n) != 0 && !a.is_empty()
+                    });
+                    if let Some(signal) = self.signals_between_commands() {
+                        flow = signal;
+                        break;
+                    }
+                    if self.env.options.interactive && (notified || trapped) {
+                        prompted = false;
+                    }
+                    continue;
+                }
                 Err(e) => {
                     let _ = sys::write_fd(2, format!("rsh: input: {e}\n").as_bytes());
                     return 1;
@@ -111,6 +142,7 @@ impl Shell {
                     base += source.iter().filter(|b| **b == b'\n').count()
                         + self.env.stdin_lines.saturating_sub(old);
                     source.clear();
+                    prompted = false;
                     if !matches!(flow, Flow::Status(_)) {
                         break;
                     }
@@ -129,6 +161,7 @@ impl Shell {
         self.finish(flow)
     }
     pub fn run_source(&mut self, source: &[u8]) -> u8 {
+        let _ = self.monitor();
         let flow = self.source_flow(source);
         self.finish(flow)
     }
@@ -262,6 +295,40 @@ impl Shell {
         }
     }
     fn wait_pid(&mut self, pid: i32) -> u8 {
+        if let Some(id) = self
+            .jobs
+            .jobs
+            .values()
+            .find(|j| j.processes.iter().any(|p| p.pid == pid))
+            .map(|j| j.id)
+        {
+            loop {
+                self.jobs.reap();
+                if let Some(j) = self.jobs.jobs.get(&id) {
+                    if let Some(p) = j.processes.iter().find(|p| p.pid == pid)
+                        && (p.done() || matches!(p.state, sys::ProcessEvent::Stopped(_)))
+                    {
+                        let status = p.status();
+                        if j.state() == crate::jobs::State::Done
+                            && let Some(j) = self.jobs.remove(id)
+                        {
+                            for p in j.processes {
+                                if p.pid != pid {
+                                    self.completed.insert(p.pid, p.status());
+                                }
+                            }
+                        }
+                        return status;
+                    }
+                } else {
+                    return self.completed.remove(&pid).unwrap_or(127);
+                }
+                if let Some(n) = self.wait_interrupt() {
+                    return (128 + n) as u8;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(1));
+            }
+        }
         loop {
             if let Some(status) = self.completed.remove(&pid) {
                 return status;
@@ -280,7 +347,35 @@ impl Shell {
                 }
                 _ => {}
             }
-            if let Some(n) = sys::first_pending_signal() {
+            if let Some(n) = self.wait_interrupt() {
+                return (128 + n) as u8;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(1));
+        }
+    }
+    fn wait_interrupt(&self) -> Option<i32> {
+        let pending = sys::pending_signal_mask();
+        (1..64).find(|n| {
+            pending & (1u64 << n) != 0
+                && (*n != sys::CHLD || self.env.traps.contains_key(n))
+                && !sys::inherited_ignored(*n)
+        })
+    }
+    fn wait_job(&mut self, id: usize) -> u8 {
+        loop {
+            self.jobs.reap();
+            if let Some(j) = self.jobs.jobs.get(&id) {
+                if j.state() != crate::jobs::State::Running {
+                    let status = j.status();
+                    if j.state() == crate::jobs::State::Done {
+                        self.jobs.remove(id);
+                    }
+                    return status;
+                }
+            } else {
+                return self.completed_jobs.remove(&id).unwrap_or(127);
+            }
+            if let Some(n) = self.wait_interrupt() {
                 return (128 + n) as u8;
             }
             std::thread::sleep(std::time::Duration::from_millis(1));
@@ -288,9 +383,26 @@ impl Shell {
     }
     fn wait_builtin(&mut self, args: &[Vec<u8>]) -> Outcome {
         if args.is_empty() {
+            let ids: Vec<_> = self
+                .jobs
+                .jobs
+                .values()
+                .filter(|j| !j.disowned)
+                .map(|j| j.id)
+                .collect();
+            for id in ids {
+                let status = self.wait_job(id);
+                if self.wait_interrupt().is_some() {
+                    return Outcome {
+                        status,
+                        ..Outcome::default()
+                    };
+                }
+            }
+            self.completed_jobs.clear();
             while let Some(pid) = self.background.first().map(Child::pid) {
                 let status = self.wait_pid(pid);
-                if sys::first_pending_signal().is_some() {
+                if self.wait_interrupt().is_some() {
                     return Outcome {
                         status,
                         ..Outcome::default()
@@ -302,15 +414,28 @@ impl Shell {
         }
         let mut status = 0;
         for arg in args {
+            if arg.starts_with(b"%") {
+                let id = self.jobs.resolve(arg).or_else(|| {
+                    std::str::from_utf8(arg.get(1..).unwrap_or_default())
+                        .ok()
+                        .and_then(|s| s.parse().ok())
+                        .filter(|id| self.completed_jobs.contains_key(id))
+                });
+                let Some(id) = id else {
+                    return Self::no_job(arg);
+                };
+                status = self.wait_job(id);
+                continue;
+            }
             let Some(pid) = std::str::from_utf8(arg)
                 .ok()
                 .and_then(|s| s.parse::<i32>().ok())
                 .filter(|n| *n > 0)
             else {
-                return Outcome::error(b"wait", b"invalid pid (%job is M8)", 127);
+                return Outcome::error(b"wait", b"invalid pid", 127);
             };
             status = self.wait_pid(pid);
-            if sys::first_pending_signal().is_some() {
+            if self.wait_interrupt().is_some() {
                 break;
             }
         }
@@ -322,6 +447,17 @@ impl Shell {
     pub(super) fn signals_between_commands(&mut self) -> Option<Flow> {
         let signals = sys::pending_signals();
         for n in 1..64 {
+            if !self.env.options.interactive && sys::inherited_ignored(n) {
+                continue;
+            }
+            if n == sys::INT
+                && signals & (1u64 << n) != 0
+                && !self.env.traps.contains_key(&n)
+                && !self.env.options.interactive
+            {
+                self.env.exit_requested = Some((128 + n) as u8);
+                return Some(Flow::Exit((128 + n) as u8));
+            }
             if signals & (1u64 << n) != 0
                 && let Some(action) = self.env.traps.get(&n).cloned()
                 && !action.is_empty()
@@ -337,6 +473,7 @@ impl Shell {
         None
     }
     pub(super) fn finish(&mut self, flow: Flow) -> u8 {
+        self.cleanup_jobs();
         let status = flow.status();
         if let Some(action) = self.env.traps.remove(&0)
             && !action.is_empty()

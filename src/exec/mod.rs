@@ -1,6 +1,7 @@
 //! AST execution with expansion, redirections, control flow and functions.
 mod builtins;
 mod control;
+mod jobs;
 use crate::ast::*;
 use crate::builtins as builtin_impl;
 use crate::builtins::{Builtin, Outcome};
@@ -45,6 +46,12 @@ pub struct Shell {
     pub env: ShellEnv,
     executable: PathBuf,
     background: Vec<Child>,
+    jobs: crate::jobs::Table,
+    terminal: Option<sys::Terminal>,
+    terminal_failed: bool,
+    exit_warned: bool,
+    command_text: Vec<u8>,
+    completed_jobs: std::collections::BTreeMap<usize, u8>,
     fd_floor: i32,
     loop_depth: usize,
     eval_depth: usize,
@@ -53,6 +60,7 @@ pub struct Shell {
     completed: std::collections::BTreeMap<i32, u8>,
     active_assignments: Vec<(Vec<u8>, Vec<u8>)>,
     pub background_signals: bool,
+    pub direct_worker: bool,
 }
 struct Simple {
     words: Vec<Vec<u8>>,
@@ -68,6 +76,12 @@ impl Shell {
             env,
             executable,
             background: Vec::new(),
+            jobs: crate::jobs::Table::default(),
+            terminal: None,
+            terminal_failed: false,
+            exit_warned: false,
+            command_text: Vec::new(),
+            completed_jobs: std::collections::BTreeMap::new(),
             fd_floor: 20,
             loop_depth: 0,
             eval_depth: 0,
@@ -76,9 +90,14 @@ impl Shell {
             completed: std::collections::BTreeMap::new(),
             active_assignments: Vec::new(),
             background_signals: false,
+            direct_worker: false,
         }
     }
     pub fn run(&mut self, script: &Script) -> u8 {
+        self.direct_worker = self.direct_worker
+            && matches!(script.0.as_slice(),[item]
+            if item.and_or.rest.is_empty() && !item.and_or.first.negated
+            && matches!(item.and_or.first.commands.as_slice(),[Command::Simple(_)]));
         let flow = self.eval_script(script);
         self.finish(flow)
     }
@@ -290,7 +309,9 @@ impl Shell {
             }
         }
         self.active_assignments = simple.assignments.clone();
-        let outcome = if let Some(builtin) = simple.builtin {
+        let outcome = if matches!(simple.builtin, Some(Builtin::Exit)) && self.stopped_exit() {
+            Outcome::default()
+        } else if let Some(builtin) = simple.builtin {
             if matches!(
                 builtin,
                 Builtin::Dot
@@ -299,6 +320,11 @@ impl Shell {
                     | Builtin::Type
                     | Builtin::Command
                     | Builtin::Wait
+                    | Builtin::Jobs
+                    | Builtin::Fg
+                    | Builtin::Bg
+                    | Builtin::Disown
+                    | Builtin::Kill
             ) {
                 self.context_builtin(builtin, simple.words.get(1..).unwrap_or_default())
             } else if matches!(
@@ -377,6 +403,21 @@ impl Shell {
     }
     fn pipeline(&mut self, pipeline: &Pipeline) -> Result<Flow, ExecError> {
         self.reap_background();
+        let previous = std::mem::replace(
+            &mut self.command_text,
+            Script(vec![ListItem {
+                and_or: AndOr {
+                    first: pipeline.clone(),
+                    rest: Vec::new(),
+                },
+                separator: Separator::Sequential,
+            }])
+            .to_source_bytes()
+            .trim_ascii_end()
+            .strip_suffix(b";")
+            .unwrap_or_default()
+            .to_vec(),
+        );
         let flow = if let [command] = pipeline.commands.as_slice() {
             match command {
                 Command::FunctionDef { name, definition } => {
@@ -403,7 +444,12 @@ impl Shell {
                     {
                         self.call_function(&simple, &function)?
                     } else {
-                        Flow::Status(self.wait_processes(vec![self.prepare(&simple)?])?)
+                        let process = self.prepare(&simple)?;
+                        Flow::Status(if self.direct_worker && self.eval_depth == 1 {
+                            sys::replace_process(&process)
+                        } else {
+                            self.wait_processes(vec![process])?
+                        })
                     }
                 }
                 _ => {
@@ -420,6 +466,7 @@ impl Shell {
                 .collect::<Result<Vec<_>, _>>()?;
             Flow::Status(self.wait_processes(processes)?)
         };
+        self.command_text = previous;
         self.reap_background();
         Ok(if let Flow::Status(s) = flow {
             Flow::Status(if pipeline.negated {
@@ -480,6 +527,34 @@ impl Shell {
         })
     }
     fn wait_processes(&mut self, prepared: Vec<PreparedProcess>) -> Result<u8, ExecError> {
+        if self.monitor() {
+            for process in &prepared {
+                process.protect_resources()?;
+            }
+            let fd = self.terminal.as_ref().map(sys::Terminal::fd);
+            let children = sys::spawn_pipeline(
+                &prepared,
+                SpawnOptions {
+                    pgid: Some(0),
+                    foreground_fd: fd,
+                    job_signals: true,
+                    ..SpawnOptions::default()
+                },
+            )?;
+            let pids: Vec<_> = children.iter().map(Child::pid).collect();
+            let pgid = pids.first().copied().unwrap_or(0);
+            let id = self.jobs.insert(
+                pids,
+                pgid,
+                self.command_text.clone(),
+                false,
+                self.env.options.pipefail,
+            );
+            return self.job_foreground(id, false);
+        }
+        if !self.env.options.interactive {
+            sys::watch_interrupt()?;
+        }
         let children = sys::spawn_pipeline(
             &prepared,
             SpawnOptions {
@@ -489,11 +564,14 @@ impl Shell {
         )?;
         let mut last = 0;
         let mut failure = 0;
+        let mut interrupted_child = false;
         let mut error = None;
         for child in children {
-            match child.wait() {
-                Ok(status) => {
+            match child.wait_kind() {
+                Ok(event) => {
+                    let status = event.status();
                     last = status;
+                    interrupted_child |= event == sys::ProcessEvent::Signaled(sys::INT);
                     if status != 0 {
                         failure = status;
                     }
@@ -505,6 +583,9 @@ impl Shell {
         }
         if let Some(error) = error {
             return Err(error.into());
+        }
+        if !self.env.traps.contains_key(&sys::INT) && sys::take_interrupt() && interrupted_child {
+            self.env.exit_requested = Some((128 + sys::INT) as u8);
         }
         Ok(if self.env.options.pipefail {
             failure
@@ -555,6 +636,42 @@ impl Shell {
             and_or: list.clone(),
             separator: Separator::Sequential,
         }]);
+        if self.monitor() {
+            let processes = if list.rest.is_empty() && !list.first.negated {
+                list.first
+                    .commands
+                    .iter()
+                    .enumerate()
+                    .map(|(i, c)| self.prepare_command(c, i > 0, i + 1 < list.first.commands.len()))
+                    .collect::<Result<Vec<_>, _>>()?
+            } else {
+                vec![self.worker_process(&script, false, sys::closed_stdio(), 0)?]
+            };
+            let children = sys::spawn_pipeline(
+                &processes,
+                SpawnOptions {
+                    pgid: Some(0),
+                    job_signals: true,
+                    ..SpawnOptions::default()
+                },
+            )?;
+            let pids: Vec<_> = children.iter().map(Child::pid).collect();
+            let pgid = pids.first().copied().unwrap_or(0);
+            self.env.last_background = pids.last().copied();
+            let text = script.to_source_bytes();
+            let id = self.jobs.insert(
+                pids,
+                pgid,
+                text.strip_suffix(b";\n").unwrap_or(&text).to_vec(),
+                true,
+                self.env.options.pipefail,
+            );
+            let _ = sys::write_fd(
+                2,
+                format!("[{id}] {}\n", self.env.last_background.unwrap_or(pgid)).as_bytes(),
+            );
+            return Ok(0);
+        }
         let process = self.worker_process(&script, true, sys::closed_stdio() & !1, 0)?;
         let children = sys::spawn_pipeline(
             &[process],
@@ -562,10 +679,24 @@ impl Shell {
                 detached: true,
                 null_stdin: true,
                 ignore_int_quit: true,
+                ..SpawnOptions::default()
             },
         )?;
         self.env.last_background = children.last().map(Child::pid);
-        self.background.extend(children);
+        let pids: Vec<_> = children.iter().map(Child::pid).collect();
+        let pgid = pids.first().copied().unwrap_or(0);
+        self.jobs.insert(
+            pids,
+            pgid,
+            script
+                .to_source_bytes()
+                .trim_ascii_end()
+                .strip_suffix(b";")
+                .unwrap_or_default()
+                .to_vec(),
+            true,
+            self.env.options.pipefail,
+        );
         Ok(0)
     }
     fn worker_process(
@@ -581,6 +712,9 @@ impl Shell {
             b"n=0".to_vec()
         }];
         words.push(format!("c={closed}").into_bytes());
+        if background || (self.env.options.interactive && self.env.options.monitor) {
+            words.push(b"J=1".to_vec());
+        }
         words.push([b"d=".as_slice(), self.env.cwd.as_os_str().as_bytes()].concat());
         words.push(format!("g={}", u8::from(self.env.noglob)).into_bytes());
         words.push(format!("p={}", self.env.shell_pid).into_bytes());
@@ -631,7 +765,7 @@ impl Shell {
             words.push(
                 format!(
                     "O={name}={}",
-                    u8::from(self.env.option(name).unwrap_or(false))
+                    u8::from(*name != "monitor" && self.env.option(name).unwrap_or(false))
                 )
                 .into_bytes(),
             );
@@ -695,7 +829,10 @@ impl Shell {
             word,
             &mut self.env,
             &mut |source, env| {
-                let mut shell = Shell::new(env.clone(), executable.clone());
+                let mut local = env.clone();
+                local.options.interactive = false;
+                local.options.monitor = false;
+                let mut shell = Shell::new(local, executable.clone());
                 shell.fd_floor = floor;
                 shell
                     .substitute(source)
@@ -761,6 +898,7 @@ impl Shell {
         Ok((out, status))
     }
     pub fn reap_background(&mut self) {
+        self.jobs.reap();
         let mut active = Vec::new();
         for child in self.background.drain(..) {
             match child.try_wait() {
@@ -775,5 +913,11 @@ impl Shell {
     }
     pub fn background_count(&self) -> usize {
         self.background.len()
+            + self
+                .jobs
+                .jobs
+                .values()
+                .filter(|j| j.state() != crate::jobs::State::Done)
+                .count()
     }
 }

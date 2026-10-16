@@ -27,6 +27,10 @@ pub enum Builtin {
     Unalias,
     Getopts,
     Umask,
+    Jobs,
+    Fg,
+    Bg,
+    Disown,
     Wait,
     Kill,
     Hash,
@@ -98,6 +102,10 @@ pub fn regular(name: &[u8]) -> Option<Builtin> {
         b"unalias" => Some(Builtin::Unalias),
         b"getopts" => Some(Builtin::Getopts),
         b"umask" => Some(Builtin::Umask),
+        b"jobs" => Some(Builtin::Jobs),
+        b"fg" => Some(Builtin::Fg),
+        b"bg" => Some(Builtin::Bg),
+        b"disown" => Some(Builtin::Disown),
         b"wait" => Some(Builtin::Wait),
         b"kill" => Some(Builtin::Kill),
         b"hash" => Some(Builtin::Hash),
@@ -134,6 +142,9 @@ impl Outcome {
 
 pub fn run(builtin: Builtin, args: &[Vec<u8>], env: &mut ShellEnv) -> Outcome {
     match builtin {
+        Builtin::Jobs | Builtin::Fg | Builtin::Bg | Builtin::Disown => {
+            Outcome::error(b"jobs", b"execution context required", 1)
+        }
         Builtin::Break | Builtin::Continue | Builtin::Return => control(builtin, args, env, 0),
         Builtin::Shift => shift(args, env),
         Builtin::Set => variables::set(args, env),

@@ -27,6 +27,7 @@ fn run() -> std::io::Result<u8> {
         );
     }
     let mut env = ShellEnv::inherited()?;
+    rsh::sys::watch_interrupt()?;
     if let Some(a) = std::env::args_os().next() {
         env.arg0 = a.as_bytes().to_vec();
     }
@@ -74,6 +75,13 @@ fn run() -> std::io::Result<u8> {
         if mode == Some(b'c') {
             break;
         }
+    }
+    let stdin_mode = mode != Some(b'c') && (mode == Some(b's') || args.peek().is_none());
+    if stdin_mode && rsh::sys::terminal(0) {
+        env.options.interactive = true;
+    }
+    if env.options.interactive {
+        env.options.monitor = true;
     }
     let first = match mode {
         Some(b'c') => Some(OsString::from("-c")),
@@ -160,7 +168,9 @@ fn worker(args: Vec<OsString>, background: bool) -> std::io::Result<u8> {
     let Some(source) = snapshot.pop() else {
         return Ok(usage());
     };
+    let mut direct_worker = false;
     let mut env = ShellEnv::inherited()?;
+    rsh::sys::watch_interrupt()?;
     env.variables.clear();
     env.last_status = status;
     let mut closed = 0;
@@ -230,6 +240,10 @@ fn worker(args: Vec<OsString>, background: bool) -> std::io::Result<u8> {
                 .ok()
                 .and_then(|s| s.parse().ok())
                 .unwrap_or(0);
+            continue;
+        }
+        if bytes == b"J=1" {
+            direct_worker = true;
             continue;
         }
         if let Some(v) = bytes.strip_prefix(b"f=") {
@@ -329,5 +343,6 @@ fn worker(args: Vec<OsString>, background: bool) -> std::io::Result<u8> {
     parser::locations::restore(&mut script, &lines);
     let mut shell = Shell::new(env, std::env::current_exe()?);
     shell.background_signals = background;
+    shell.direct_worker = direct_worker;
     Ok(shell.run(&script))
 }
