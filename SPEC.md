@@ -506,7 +506,7 @@ Each milestone is done only when its tests pass and `cargo clippy -- -D warnings
    ## stdout: expected
    ## status: 0
    ```
-   Keep a `KNOWN_FAILURES` list; CI fails if a listed case starts passing without being removed.
+   Keep a `KNOWN_FAILURES` list only when there are known failures; an absent file means no exemptions. CI fails on unexpected failures or if a listed case starts passing without being removed.
 5. **PTY tests** (`rexpect` or `expectrl`): interactive behavior, prompts, job control (`Ctrl-Z`, `fg`, `bg`), history, completion, continuation prompts.
 6. **Fuzzing**: `cargo-fuzz` targets for the lexer and parser (never panic, always terminate); property test that `parse(display(ast)) == ast` for generated ASTs.
 

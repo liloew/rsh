@@ -40,7 +40,9 @@ expectation or the JSON alternative (partial fields inherit primary values).
 in a comment near the case. `## N-I dash: explanation` skips that reference only.
 
 Reports are `target/spec-report.json` and `target/spec-junit.xml` by default.
-`KNOWN_FAILURES` contains `area/file.test.sh::name | reason | classification`;
+`KNOWN_FAILURES` is optional: an absent file means there are no known failures
+and unexpected failures still fail the run. When needed, it contains
+`area/file.test.sh::name | reason | classification`;
 classification is a SPEC.md section-12 anchor, `extension`, or `TODO`. New failures,
 stale entries that now pass, unknown IDs, malformed entries, and any reference
 failure return nonzero. `--update-known-failures` refreshes an **unfiltered rsh**

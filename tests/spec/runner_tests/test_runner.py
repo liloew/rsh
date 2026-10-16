@@ -50,6 +50,16 @@ class FormatTests(unittest.TestCase):
         self.assertTrue(r.evaluate_policy([failed], {}, {'a::x'}))
         self.assertFalse(r.evaluate_policy([failed], {'a::x': ('reason', 'TODO')}, {'a::x'}))
         self.assertTrue(r.evaluate_policy([dict(failed, outcome='PASS')], {'a::x': ('reason', 'TODO')}, {'a::x'}))
+    def test_missing_known_file_means_no_exemptions(self):
+        with tempfile.TemporaryDirectory() as d:
+            path = Path(d) / 'KNOWN_FAILURES'
+            known = r.load_known(path)
+            self.assertEqual(known, {})
+            self.assertFalse(path.exists())
+            passed = {'id': 'a::x', 'outcome': 'PASS', 'shell': 'rsh'}
+            self.assertFalse(r.evaluate_policy([passed], known, {'a::x'}))
+            failed = dict(passed, outcome='FAIL')
+            self.assertTrue(r.evaluate_policy([failed], known, {'a::x'}))
     def test_reference_failure_cannot_be_known(self):
         failed = {'id': 'x', 'outcome': 'FAIL', 'shell': 'dash'}
         self.assertTrue(r.evaluate_policy([failed], {'x': ('reason', 'TODO')}, {'x'}, True))
