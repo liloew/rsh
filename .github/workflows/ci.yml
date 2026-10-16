@@ -20,9 +20,23 @@ jobs:
           else
             brew install dash bash
           fi
+      - name: Reference shell versions and hashes
+        run: cargo run --bin spec-runner -- --versions
       - run: cargo fmt --all -- --check
       - run: cargo clippy --all-targets -- -D warnings
       - run: cargo test
+      - name: Verify spec expectations against references
+        run: cargo run --bin spec-runner -- verify-references --report-dir target/spec-references
+      - name: Run rsh conformance cases
+        run: cargo run --bin spec-runner -- run
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: spec-reports-${{ matrix.os }}
+          path: |
+            target/spec-report.json
+            target/spec-junit.xml
+            target/spec-references/
       - name: Repeat PTY job-control and editor tests to detect races
         run: |
           for iteration in $(seq 1 20); do

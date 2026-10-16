@@ -465,3 +465,21 @@ parameters PS1/PS2 and shell input/alias rules):
   microseconds. These are reference measurements, not timing assertions in CI.
   Visual colors, detailed vi key behavior and real-terminal compatibility still
   require the human feedback tracked in tests/pty/MANUAL.md. No M10 work was done.
+
+M10 progress (not yet complete):
+- Step 1 adds the spec-runner test launcher, strict case metadata parser,
+  per-case temporary cwd/HOME, fixed C locale/environment, ordered parallel runs,
+  five-second deadlines, resource-limit helper, and owned-session cleanup (also
+  covering background jobs that change process groups). Stdout/status are exact;
+  only stderr diagnostic shell prefixes and temporary paths are normalized.
+- verify-references rejects bad reference expectations independently of
+  KNOWN_FAILURES. run/diff produce JSON and JUnit reports and reject unexpected,
+  stale, unknown or malformed known failures. Shell alternatives are explicit
+  JSON metadata, with skips requiring explanations. See tests/REFERENCE_VERSIONS.md
+  for the format, actual reference versions/build hashes, and commands.
+- Step-1 validation: 15 Python infrastructure checks, both bootstrap quoting
+  cases under both references and rsh, full cargo test, fmt and all-target Clippy
+  pass. The initial NPROC=64 limit was inappropriate on a shared desktop UID and
+  prevented valid forks; the test helper now caps it at 1024 (or the existing hard
+  limit). CPU/file limits apply on both platforms; Linux additionally caps address
+  space. No M10 completion checkbox is checked and no M11 work is introduced.

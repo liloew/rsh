@@ -2,6 +2,7 @@
 name = "rsh"
 version = "0.1.0"
 edition = "2024"
+default-run = "rsh"
 
 [dependencies]
 thiserror = "2"
@@ -12,3 +13,7 @@ nu-ansi-term = "0.50"
 
 [dev-dependencies]
 expectrl = "0.8"
+
+[[bin]]
+name = "spec-sandbox"
+path = "src/sys/spec-sandbox.rs"
