@@ -2,6 +2,8 @@
 use super::ShellEnv;
 #[derive(Debug, Clone, Default)]
 pub struct Options {
+    pub vi: bool,
+    pub git_prompt: bool,
     pub monitor: bool,
     pub errexit: bool,
     pub nounset: bool,
@@ -13,6 +15,8 @@ pub struct Options {
     pub expand_aliases: bool,
 }
 pub const NAMES: &[&str] = &[
+    "vi",
+    "git_prompt",
     "monitor",
     "errexit",
     "nounset",
@@ -26,6 +30,8 @@ pub const NAMES: &[&str] = &[
 impl ShellEnv {
     pub fn option(&self, name: &str) -> Option<bool> {
         Some(match name {
+            "vi" => self.options.vi,
+            "git_prompt" => self.options.git_prompt,
             "monitor" => self.options.monitor,
             "errexit" => self.options.errexit,
             "nounset" => self.options.nounset,
@@ -40,6 +46,8 @@ impl ShellEnv {
     }
     pub fn set_option(&mut self, name: &str, value: bool) -> bool {
         match name {
+            "vi" => self.options.vi = value,
+            "git_prompt" => self.options.git_prompt = value,
             "monitor" => self.options.monitor = value,
             "errexit" => self.options.errexit = value,
             "nounset" => self.options.nounset = value,

@@ -88,7 +88,6 @@ impl ShellEnv {
         for (name, value) in [
             (b"IFS".as_slice(), b" \t\n".as_slice()),
             (b"PATH", b"/usr/bin:/bin"),
-            (b"PS1", b"$ "),
             (b"PS2", b"> "),
             (b"PS4", b"+ "),
             (b"OPTIND", b"1"),

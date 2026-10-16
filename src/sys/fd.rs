@@ -85,6 +85,9 @@ impl FdPlan {
                 _ => vec![],
             })
             .collect();
+        if references.iter().any(|fd| super::editor_descriptor(*fd)) {
+            return Err(io::Error::other("descriptor reserved by line editor"));
+        }
         BACKUPS.with(|registry| {
             let mut registry = registry.borrow_mut();
             registry.retain(|weak| weak.strong_count() > 0);

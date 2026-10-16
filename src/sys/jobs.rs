@@ -213,3 +213,13 @@ pub fn current_foreground(fd: RawFd) -> io::Result<i32> {
         Ok(group)
     }
 }
+
+impl TerminalModes {
+    /// Observable terminal flags, useful when checking editor recovery.
+    pub fn echo_and_canonical(&self) -> (bool, bool) {
+        (
+            self.0.c_lflag & libc::ECHO != 0,
+            self.0.c_lflag & libc::ICANON != 0,
+        )
+    }
+}

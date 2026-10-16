@@ -30,12 +30,18 @@ fn run() -> std::io::Result<u8> {
     rsh::sys::watch_interrupt()?;
     if let Some(a) = std::env::args_os().next() {
         env.arg0 = a.as_bytes().to_vec();
+        env.options.login = a.as_bytes().starts_with(b"-");
     }
     let mut dump = false;
     let mut mode = None;
     let mut end_options = false;
     while let Some(arg) = args.peek() {
         let b = arg.as_bytes();
+        if b == b"--vi" {
+            env.options.vi = true;
+            args.next();
+            continue;
+        }
         if b == b"--dump-ast" {
             dump = true;
             args.next();
@@ -80,6 +86,9 @@ fn run() -> std::io::Result<u8> {
     if stdin_mode && rsh::sys::terminal(0) {
         env.options.interactive = true;
     }
+    if stdin_mode && !rsh::sys::terminal(0) {
+        env.options.interactive = false;
+    }
     if env.options.interactive {
         env.options.monitor = true;
     }
@@ -102,8 +111,12 @@ fn run() -> std::io::Result<u8> {
         }
         option if option.is_none() || option == Some(OsStr::new("-s")) => {
             env.positional = args.map(|a| a.as_bytes().to_vec()).collect();
-            if !dump && !env.options.noexec {
+            if !dump && (!env.options.noexec || env.options.interactive) {
                 let mut shell = Shell::new(env, std::env::current_exe()?);
+                rsh::interactive::startup(&mut shell);
+                if shell.env.options.interactive && rsh::sys::terminal(0) {
+                    return Ok(rsh::interactive::run(shell));
+                }
                 return Ok(shell.run_stdin());
             }
             std::io::stdin().read_to_end(&mut source)?;
@@ -131,6 +144,7 @@ fn evaluate(
     if !dump && !worker {
         let mut shell = Shell::new(env, std::env::current_exe()?);
         shell.background_signals = background;
+        rsh::interactive::startup(&mut shell);
         return Ok(shell.run_source(source));
     }
     let script = match parser::parse(source) {
@@ -175,8 +189,13 @@ fn worker(args: Vec<OsString>, background: bool) -> std::io::Result<u8> {
     env.last_status = status;
     let mut closed = 0;
     let mut lines = Vec::new();
+    let mut history = None;
     for arg in snapshot.iter().map(|v| OsStr::from_bytes(v)) {
         let bytes = arg.as_bytes();
+        if let Some(v) = bytes.strip_prefix(b"H=") {
+            history = Some(v.to_vec());
+            continue;
+        }
         if let Some(v) = bytes.strip_prefix(b"L=") {
             lines = v.to_vec();
             continue;
@@ -344,5 +363,8 @@ fn worker(args: Vec<OsString>, background: bool) -> std::io::Result<u8> {
     let mut shell = Shell::new(env, std::env::current_exe()?);
     shell.background_signals = background;
     shell.direct_worker = direct_worker;
+    if let Some(history) = history {
+        shell.restore_history_snapshot(&history);
+    }
     Ok(shell.run(&script))
 }

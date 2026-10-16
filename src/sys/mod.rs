@@ -1,7 +1,9 @@
 //! Safe process wrappers. Every child path after fork is allocation/lock free.
 mod builtins;
+mod interactive;
 mod jobs;
 pub use builtins::*;
+pub use interactive::*;
 pub use jobs::*;
 
 use nix::{errno::Errno, libc};

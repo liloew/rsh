@@ -27,6 +27,7 @@ pub enum Builtin {
     Unalias,
     Getopts,
     Umask,
+    History,
     Jobs,
     Fg,
     Bg,
@@ -102,6 +103,7 @@ pub fn regular(name: &[u8]) -> Option<Builtin> {
         b"unalias" => Some(Builtin::Unalias),
         b"getopts" => Some(Builtin::Getopts),
         b"umask" => Some(Builtin::Umask),
+        b"history" => Some(Builtin::History),
         b"jobs" => Some(Builtin::Jobs),
         b"fg" => Some(Builtin::Fg),
         b"bg" => Some(Builtin::Bg),
@@ -142,7 +144,7 @@ impl Outcome {
 
 pub fn run(builtin: Builtin, args: &[Vec<u8>], env: &mut ShellEnv) -> Outcome {
     match builtin {
-        Builtin::Jobs | Builtin::Fg | Builtin::Bg | Builtin::Disown => {
+        Builtin::History | Builtin::Jobs | Builtin::Fg | Builtin::Bg | Builtin::Disown => {
             Outcome::error(b"jobs", b"execution context required", 1)
         }
         Builtin::Break | Builtin::Continue | Builtin::Return => control(builtin, args, env, 0),

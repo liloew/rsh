@@ -212,7 +212,7 @@ Specifics:
 - Background launch announces `[N] PID` only with active job control and updates `$!` to the last pipeline PID. Without job control, preserve INT/QUIT ignore and /dev/null stdin before explicit command redirections. Subshells reset the table and monitor/interactive state; command substitutions use the existing capture path without becoming jobs or changing the parent's terminal ownership.
 - The first interactive exit with stopped jobs warns `There are stopped jobs.`; a second exits. On interactive shell exit, send HUP followed by CONT to each remaining owned job unless disowned/HUP-exempt. Non-interactive exits do not apply that convention.
 - Non-interactive foreground waits implement cooperative SIGINT: wait/reap all children, and terminate the shell only if it received INT and a child terminated from INT. Explicit traps run in shell context. Startup-ignored signals cannot be caught in non-interactive workers; CHLD uses a caught no-op internally to retain waitable statuses.
-- The minimal byte-input prompt loop is present only to exercise M8 terminal ownership. Line editing, history, completion, startup profiles and other M9 features are not implemented here.
+- M8 introduced a minimal byte-input loop to exercise terminal ownership. M9 now supplies the editor described in section 9 and retains a plain terminal fallback.
 
 ## 9. Interactive layer (fish-style UX)
 
@@ -224,6 +224,35 @@ Built on `reedline` (preferred) or `rustyline`.
 - Tab completion: commands (PATH, builtins, functions, aliases), file paths, variables after `$`, and pluggable per-command completion later.
 - Multi-line editing and continuation prompts driven by `ParseError::Incomplete`.
 - Config: `~/.config/rsh/config.sh` is sourced on interactive start. Login shells source `/etc/profile` and `~/.profile`.
+
+M9 implementation details:
+- Reedline supplies Emacs editing, opt-in `--vi` / `set -o vi`, reverse search,
+  prefix history navigation, bracketed paste, menus and resize handling. `set -o
+  git_prompt` enables a branch read from `.git/HEAD` (including worktrees); no
+  external git command runs during editing. PS1/PS2 expansion uses execution-time
+  parameter/command/arithmetic expansion and preserves the preceding status.
+- HISTFILE overrides XDG_DATA_HOME/rsh/history, otherwise HOME/.local/share/rsh/history.
+  Empty HISTFILE disables persistence. HISTSIZE defaults to 1000 and HISTFILESIZE
+  to 2000 entries; configurable limits are capped at 100,000. Versioned timestamp,
+  cwd and hex-encoded UTF-8 command records preserve multiline entries. A separate
+  lock inode serializes merge/atomic rename; new files have mode 0600. `history`
+  lists session entries, and `history -c` clears memory and disk.
+- Completion exposes `interactive::completion::Registry::register` with pure
+  candidate providers. Command-position detection uses lexer tokens; files,
+  directories, variables, builtins/functions/aliases/PATH commands, static git/cargo
+  subcommands and job specifiers are supported. Directory scans allow 2048 entries
+  /20 ms, a 25 ms caller deadline, and at most two outstanding workers. PATH scans
+  allow 2000 directories/20,000 entries/50 ms and are cached for two seconds,
+  invalidated on PATH/cwd changes. Explicit executable paths have a bounded TTL
+  cache too. Slow filesystem syscalls stay in bounded background workers.
+- Job notifications use Reedline's external printer to redraw safely. Terminal
+  dimensions are refreshed while idle and immediately before execution. Startup
+  errors warn with filename/line and return to the caller; they do not terminate
+  the interactive session. Non-TTY stdin uses the byte-based script reader;
+  TERM=dumb or unset TERM uses plain PS1/PS2 without editor escape sequences.
+- `tests/pty/MANUAL.md` tracks visual/real-terminal checks requiring human feedback;
+  automated tests do not claim that those manual checks have been performed.
+
 
 ## 10. Milestones
 
@@ -260,7 +289,8 @@ Each milestone is done only when its tests pass and `cargo clippy -- -D warnings
 - [x] **M8 Job control**: section 8, interactive and non-interactive behavior, signal handling correctness.
   - Added the job/process state table, monitor option, terminal/group lifecycle, signal-hook CHLD flag, foreground/group waits, notifications/specifiers, jobs/fg/bg/PID-or-job wait/kill/disown and stopped-job exit/HUP/CONT handling. Re-exec workers preserve the async-signal-safe fork boundary; shell-private terminal descriptors relocate around user redirections. No M9 line editor, history, completion or profile behavior was added.
   - Validation: fmt and strict all-target Clippy pass; cargo test passes 138 tests. Six isolated helper entries are invoked by wrapper tests rather than run concurrently. Eight PTY scenarios pass 20 consecutive full-suite runs on the final code; the pipeline-stop scenario additionally passed 20 isolated repetitions. Both monitored/non-monitored 200-job status checks, PID accuracy, mixed-load no-zombie checks, dash/bash differentials and manual bash interaction comparison pass. CI repeats the PTY suite 20 times on Linux/macOS. Linux cross-target Clippy and fuzz-workspace checks pass; Linux runtime execution is left to CI.
-- [ ] **M9 Interactive UX**: section 9 (REPL, history, highlighting, suggestions, completion, continuation prompts).
+- [x] **M9 Interactive UX**: section 9 (REPL, history, highlighting, suggestions, completion, continuation prompts).
+  - Automated M9 coverage passes: nine UI unit tests, three startup/fallback integration tests, nine real-editor/plain-terminal PTY scenarios, and 173 existing M3–M8 script fixtures rerun with -i and PTY stdin. The full suite has 160 passing tests. The human visual/terminal checklist in tests/pty/MANUAL.md remains explicitly unchecked; it is not represented as automated verification.
 - [ ] **M10 Conformance pass**: run the ported Oils spec-test cases and differential fuzzing; fix or document every deviation.
 - [ ] **M11 Optional extensions** (each behind a flag/option): arrays, `[[ ]]`, `local`, `function` keyword, `{a,b}` brace expansion, `<(...)`, `pipefail` default, `select`, `**` globstar.
 
@@ -361,3 +391,77 @@ M8 job-control choices and validation (SPEC 6–8; POSIX 2.11, 2.12, 2.14; glibc
 - Validation commands: cargo fmt --all; cargo fmt --all -- --check; cargo clippy --all-targets -- -D warnings; cargo test. Linux aarch64 cross-target Clippy and fuzz-workspace format/Clippy checks also pass. Runtime tests were executed on macOS with PTY permissions; Linux runtime coverage remains CI's responsibility. No M9 milestone item is checked.
 
 - Final stability result: after fixing the test synchronization and state-notification issues above, the final eight-scenario PTY suite passed 20/20 consecutive runs (160 scenario executions, including 4,000 monitored short jobs). The pipeline-stop case also passed 20/20 isolated runs. No intermittent failure remained in those final runs; this is measured repeat coverage, not a proof that no race exists. CI repeats the full PTY suite 20 times and preserves failed command output.
+
+M9 interactive implementation choices and validation (SPEC 9; POSIX shell
+parameters PS1/PS2 and shell input/alias rules):
+- The UI edits Unicode text; core scripts, words, environment values and paths
+  remain byte-based. Non-UTF-8 filesystem names cannot be offered as Unicode
+  completion candidates. The plain TERM=dumb fallback offers continuation and
+  signal handling, without editing/search/menus/colors. Unset TERM deliberately
+  chooses that same fallback.
+- Unlike fish, the core language remains POSIX shell syntax. Unlike bash's default
+  history navigation, Up/Down use prefix search when there is input; suggestions
+  prefer the most recent matching entry in the current directory. History uses
+  rsh's versioned multiline/cwd record format, not fish/bash's file formats.
+  Git/cargo completion is a static subcommand provider, not external-tool probing.
+  Huge or slow listings may produce partial results instead of blocking editing.
+- Startup-file failures (including an explicit exit from a startup file) warn and
+  return to startup processing, as required for resilient configuration loading.
+  /etc/profile precedes HOME/.profile for -l or a leading-dash argv[0]; interactive
+  configuration then uses XDG_CONFIG_HOME or HOME/.config. Aliases are enabled in
+  the interactive parser; parsing/validation/highlighting never performs expansion.
+- PTY fixtures answer one cursor-position query at a time. The first harness used
+  an unanchored expectrl regex that consumed several matches and silently lost
+  later queries; anchored, single-frame matching and completed-paint/submission
+  boundaries fixed the resulting artificial cursor-query timeouts. Foreground
+  control characters are sent after the editor releases raw mode. Panic recovery
+  compares terminal flags to expectrl's initial echo-disabled, canonical state.
+- The script regression adapter runs 173 existing M3–M8 golden/differential scripts
+  with -i and PTY stdin, comparing output/status against ordinary execution.
+  Monitor is disabled for output parity, i is normalized in option-flag output,
+  times compares row structure, and both runs wait for outstanding jobs before
+  exiting (an interactive exit would otherwise intentionally HUP them). It does
+  not replace the separate real-editor PTY scenarios or the existing three-shell
+  differential comparisons.
+
+- Descriptor isolation: asynchronous directory scans hold a shared IO guard;
+  command execution/prompt substitution takes the exclusive guard, with a 75 ms
+  deadline. A hung filesystem yields a retry diagnostic and keeps the line for
+  another Enter, instead of hanging or executing across a live scanner fd. Plain
+  terminals do not start background PATH scans. Reedline/crossterm's opaque fds
+  are initialized above fd 64, marked CLOEXEC and protected against explicit
+  user redirection references. Those few implementation-reserved high fd numbers
+  produce a diagnostic rather than being clobbered; ordinary low descriptors
+  (including 3 and 10) work normally. This is an interactive implementation limit;
+  script mode retains M4's descriptor behavior. Recovery reopens /dev/tty so
+  persistent exec redirections cannot overwrite a retained recovery descriptor.
+- History is copied into re-exec pipeline/subshell workers even with HISTFILE
+  disabled. A child history -c clears its own copy, preserving the parent session.
+  The PTY suite serializes independent terminal scenarios; its dedicated two-shell
+  test still performs concurrent, locked history writes. CI repeats job-control
+  and editor scenarios 20 times, and runs the larger script corpus once per suite.
+
+- Final M9 validation on macOS: cargo fmt --all; cargo fmt --all -- --check;
+  cargo clippy --all-targets -- -D warnings; cargo test all pass (160 passed,
+  0 failed, 10 ignored harness entries: seven isolated helpers invoked by their
+  wrapper tests and three opt-in benchmarks). The existing dash/bash --posix
+  differential tests pass; no golden expectation file was changed. Linux-only
+  /proc fd assertions are added and remain for Linux CI runtime verification.
+- Added nine UI unit tests (highlighting/incomplete syntax, suggestions, pure
+  completion/registry, prompts/git HEAD, history limits/format/configuration,
+  executable-cache invalidation and bounded scanner handoff), three startup/
+  non-TTY integration tests, nine PTY scenarios plus an isolated panic helper,
+  and the 173-script PTY adapter. Two real shells concurrently write 60 history
+  records; every record survives and decodes, and history -c clears the store.
+- Stability: an eight-scenario editor suite passed three consecutive runs after
+  descriptor isolation was introduced. The final complete suite additionally
+  covers idle job notifications and the final initialization/UTF-8 fixes; all
+  nine editor scenarios pass. Earlier cursor-query harness failures and actual
+  fd collisions were fixed rather than ignored. These repetitions do not prove
+  absence of races; CI retains 20 repetitions of job-control/editor scenarios.
+- Opt-in reference benchmarks (unoptimized local test build): 200-character full
+  highlighter averages 138 microseconds, completion over 2000 command names
+  averages 904 microseconds, and a 2000-entry PATH cache hit averages 0.9
+  microseconds. These are reference measurements, not timing assertions in CI.
+  Visual colors, detailed vi key behavior and real-terminal compatibility still
+  require the human feedback tracked in tests/pty/MANUAL.md. No M10 work was done.

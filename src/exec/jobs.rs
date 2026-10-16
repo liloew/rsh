@@ -98,6 +98,16 @@ impl Shell {
         Ok(status)
     }
     pub(super) fn notify_jobs(&mut self) -> bool {
+        let notices = self.job_notifications();
+        if !notices.is_empty() {
+            let _ = sys::write_fd(2, &notices);
+            true
+        } else {
+            false
+        }
+    }
+    pub(super) fn job_notifications(&mut self) -> Vec<u8> {
+        let mut notices = Vec::new();
         self.jobs.reap();
         let ids: Vec<_> = self
             .jobs
@@ -106,9 +116,8 @@ impl Shell {
             .filter(|j| j.background && !j.disowned && !j.notified && j.state() != State::Running)
             .map(|j| j.id)
             .collect();
-        let announced = !ids.is_empty();
         for id in ids {
-            let _ = sys::write_fd(2, &self.jobs.line(id, false));
+            notices.extend(self.jobs.line(id, false));
             if let Some(j) = self.jobs.jobs.get_mut(&id) {
                 j.notified = true;
             }
@@ -129,7 +138,7 @@ impl Shell {
                 self.completed_jobs.insert(id, j.status());
             }
         }
-        announced
+        notices
     }
     pub(super) fn no_job(spec: &[u8]) -> Outcome {
         let mut out = Outcome {

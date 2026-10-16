@@ -34,6 +34,34 @@ impl Shell {
                 return self.jobs_builtin(builtin, args);
             }
             Builtin::Kill => return self.kill_builtin(args),
+            Builtin::History => {
+                let Some(history) = &self.history else {
+                    return Outcome::default();
+                };
+                let Ok(mut history) = history.lock() else {
+                    return Outcome::error(b"history", b"history lock poisoned", 1);
+                };
+                if args == [b"-c".to_vec()] {
+                    return match history.clear() {
+                        Ok(()) => Outcome::default(),
+                        Err(e) => Outcome::error(b"history", e.to_string().as_bytes(), 1),
+                    };
+                }
+                if !args.is_empty() {
+                    return Outcome::error(b"history", b"usage: history [-c]", 2);
+                }
+                let stdout = history
+                    .entries
+                    .iter()
+                    .enumerate()
+                    .map(|(i, e)| format!("{}  {}\n", i + 1, e.command))
+                    .collect::<String>()
+                    .into_bytes();
+                return Outcome {
+                    stdout,
+                    ..Outcome::default()
+                };
+            }
             Builtin::Wait => return self.wait_builtin(args),
             Builtin::Type | Builtin::Command => return self.command_builtin(builtin, args),
             _ => Ok(Flow::Status(0)),
@@ -204,7 +232,18 @@ impl Shell {
                 }
                 Err(crate::parser::ParseError::Incomplete(_)) if end < source.len() => {}
                 Err(e) => {
-                    let _ = sys::write_fd(2, format!("{e}\n").as_bytes());
+                    let line = match &e {
+                        crate::parser::ParseError::Syntax { line, .. } => base + *line,
+                        _ => base + chunk.iter().filter(|b| **b == b'\n').count() + 1,
+                    };
+                    self.env
+                        .set(b"LINENO".to_vec(), line.to_string().into_bytes());
+                    let message = if let Some(path) = &self.startup_context {
+                        format!("rsh: {}:{line}: warning: {e}\n", path.display())
+                    } else {
+                        format!("{e}\n")
+                    };
+                    let _ = sys::write_fd(2, message.as_bytes());
                     self.env.exit_requested = Some(2);
                     return Flow::Exit(2);
                 }

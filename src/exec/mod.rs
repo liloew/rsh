@@ -1,6 +1,7 @@
 //! AST execution with expansion, redirections, control flow and functions.
 mod builtins;
 mod control;
+mod interactive;
 mod jobs;
 use crate::ast::*;
 use crate::builtins as builtin_impl;
@@ -61,6 +62,9 @@ pub struct Shell {
     active_assignments: Vec<(Vec<u8>, Vec<u8>)>,
     pub background_signals: bool,
     pub direct_worker: bool,
+    pub(crate) startup_context: Option<PathBuf>,
+    pub(crate) history:
+        Option<std::sync::Arc<std::sync::Mutex<crate::interactive::history::Store>>>,
 }
 struct Simple {
     words: Vec<Vec<u8>>,
@@ -91,6 +95,8 @@ impl Shell {
             active_assignments: Vec::new(),
             background_signals: false,
             direct_worker: false,
+            history: None,
+            startup_context: None,
         }
     }
     pub fn run(&mut self, script: &Script) -> u8 {
@@ -325,6 +331,7 @@ impl Shell {
                     | Builtin::Bg
                     | Builtin::Disown
                     | Builtin::Kill
+                    | Builtin::History
             ) {
                 self.context_builtin(builtin, simple.words.get(1..).unwrap_or_default())
             } else if matches!(
@@ -712,6 +719,17 @@ impl Shell {
             b"n=0".to_vec()
         }];
         words.push(format!("c={closed}").into_bytes());
+        if let Some(history) = &self.history
+            && let Ok(history) = history.lock()
+        {
+            words.push(
+                [
+                    b"H=".as_slice(),
+                    &crate::interactive::history::encode(&history.entries),
+                ]
+                .concat(),
+            );
+        }
         if background || (self.env.options.interactive && self.env.options.monitor) {
             words.push(b"J=1".to_vec());
         }

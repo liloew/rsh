@@ -103,6 +103,7 @@ impl Drop for Shell {
 // scheduler delay. exec retains the shell PID/group and uses a short settling delay.
 #[test]
 fn stop_bg_fg_interrupt_and_terminal_restore() {
+    let _pty = crate::PTY_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let mut sh = Shell::new();
     sh.line("exec 3>fd3; true; exec 3>&-; exec 10>fd10; true; exec 10>&-");
     sh.prompt();
@@ -152,6 +153,7 @@ fn stop_bg_fg_interrupt_and_terminal_restore() {
 }
 #[test]
 fn background_markers_specs_wait_and_disown() {
+    let _pty = crate::PTY_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let mut sh = Shell::new();
     sh.line("sleep 100 &");
     sh.session.expect(Regex(r"\[1\] [0-9]+")).unwrap();
@@ -187,6 +189,7 @@ fn background_markers_specs_wait_and_disown() {
 }
 #[test]
 fn pipeline_group_and_stopped_exit_warning() {
+    let _pty = crate::PTY_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let mut sh = Shell::new();
     sh.line("sleep 100 | sleep 100");
     let group = sh.foreground();
@@ -226,6 +229,7 @@ fn pipeline_group_and_stopped_exit_warning() {
 }
 #[test]
 fn builtin_function_pipelines_and_exec_signals() {
+    let _pty = crate::PTY_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let mut sh = Shell::new();
     sh.line("f() { sleep 100; }; f | cat");
     sh.foreground();
@@ -256,6 +260,7 @@ fn builtin_function_pipelines_and_exec_signals() {
 
 #[test]
 fn automatic_mode_subshells_substitutions_and_ttin() {
+    let _pty = crate::PTY_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let mut sh = Shell::start(false);
     sh.line("case $- in *im*|*mi*) echo monitored;; esac");
     sh.expect("monitored");
@@ -282,6 +287,7 @@ fn automatic_mode_subshells_substitutions_and_ttin() {
 }
 #[test]
 fn pipeline_interrupt_leaves_no_group_members() {
+    let _pty = crate::PTY_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let mut sh = Shell::new();
     sh.line("sleep 100 | sleep 100");
     let group = sh.foreground();
@@ -301,6 +307,7 @@ fn pipeline_interrupt_leaves_no_group_members() {
 
 #[test]
 fn disown_exempts_hangup_and_hangup_continues_stopped_jobs() {
+    let _pty = crate::PTY_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let mut sh = Shell::new();
     sh.line("sleep 100 &");
     sh.prompt();
@@ -350,6 +357,7 @@ fn disown_exempts_hangup_and_hangup_continues_stopped_jobs() {
 #[test]
 #[ignore = "isolated helper executed as the foreground PTY job by the HUP test"]
 fn hangup_probe() {
+    let _pty = crate::PTY_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     rsh::sys::trap_signal(rsh::sys::HUP, Some(b"record")).unwrap();
     rsh::sys::send_signal(
         std::process::id() as i32,
@@ -365,6 +373,7 @@ fn hangup_probe() {
 }
 #[test]
 fn monitored_race_200_jobs_retains_every_status() {
+    let _pty = crate::PTY_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let mut sh = Shell::new();
     sh.session.set_expect_timeout(Some(Duration::from_secs(20)));
     sh.line("pids=; i=0; while test $i -lt 200; do (exit $((i%20))) & pids=\"$pids $!\"; i=$((i+1)); done; for p in $pids; do wait $p; printf 'status:%s\\n' $?; done; echo RACE-DONE");
