@@ -7,7 +7,7 @@ fn fixture(config: &str) -> TempDir {
     d.fixtures();
     std::fs::create_dir_all(d.0.join("config/rsh")).unwrap();
     std::fs::write(d.0.join("config/rsh/motd"), b"DAILY-MESSAGE\n").unwrap();
-    std::fs::write(d.0.join("config/rsh/config.sh"), config).unwrap();
+    std::fs::write(d.0.join("config/rsh/config.rsh"), config).unwrap();
     d
 }
 fn launch(d: &TempDir, args: &[&str], suppress: bool) -> OsSession {

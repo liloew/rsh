@@ -25,8 +25,8 @@ pub fn builtin_names() -> &'static [&'static str] {
     &[
         ":", ".", "alias", "bg", "break", "cd", "command", "continue", "disown", "echo", "eval",
         "exec", "exit", "export", "false", "fg", "getopts", "hash", "history", "jobs", "kill",
-        "motd", "printf", "pwd", "read", "readonly", "return", "set", "shift", "test", "[",
-        "times", "trap", "true", "type", "umask", "unalias", "unset", "wait",
+        "motd", "printf", "pwd", "read", "readonly", "return", "set", "shift", "source", "test",
+        "[", "times", "trap", "true", "type", "umask", "unalias", "unset", "wait",
     ]
 }
 #[derive(Debug, PartialEq, Eq)]
@@ -172,26 +172,28 @@ fn edit_mode(vi: bool) -> Box<dyn reedline::EditMode> {
     }
 }
 pub fn startup(s: &mut Shell) {
-    let home = s
+    let config = s
         .env
-        .get(b"HOME")
-        .map(|p| std::path::PathBuf::from(std::ffi::OsStr::from_bytes(p)));
-    if s.env.options.login {
-        s.startup_file(std::path::Path::new("/etc/profile"));
-        if let Some(home) = &home {
-            s.startup_file(&home.join(".profile"));
-        }
+        .get(b"XDG_CONFIG_HOME")
+        .filter(|v| !v.is_empty())
+        .map(|v| std::path::PathBuf::from(std::ffi::OsStr::from_bytes(v)))
+        .or_else(|| {
+            s.env
+                .get(b"HOME")
+                .map(|v| std::path::PathBuf::from(std::ffi::OsStr::from_bytes(v)).join(".config"))
+        });
+    let Some(config) = config else {
+        return;
+    };
+    let (files, errors) = sys::rsh_config_files(&s.env.cwd.join(config).join("rsh"));
+    for (path, error) in errors {
+        let _ = sys::write_fd(
+            2,
+            format!("rsh: {}:1: warning: {error}\n", path.display()).as_bytes(),
+        );
     }
-    if s.env.options.interactive {
-        let config = s
-            .env
-            .get(b"XDG_CONFIG_HOME")
-            .filter(|s| !s.is_empty())
-            .map(|p| std::path::PathBuf::from(std::ffi::OsStr::from_bytes(p)))
-            .or_else(|| home.map(|p| p.join(".config")));
-        if let Some(config) = config {
-            s.startup_file(&config.join("rsh/config.sh"));
-        }
+    for path in files {
+        s.startup_file(&path);
     }
 }
 /// Called only on the top-level terminal REPL path, after configuration.

@@ -211,7 +211,7 @@ other M11 features remain untouched.
 `: . break continue eval exec exit export readonly return set shift times trap unset`
 
 **Regular builtins:**
-`cd pwd echo printf test [ read type command alias unalias getopts umask wait kill jobs fg bg true false ulimit(later) hash(later)`
+`cd pwd echo printf test [ read source type command alias unalias getopts umask wait kill jobs fg bg true false ulimit(later) hash(later)`
 
 Specifics:
 - `cd`: handle `-`, `CDPATH`, `-L/-P`; update `PWD` and `OLDPWD`.
@@ -220,7 +220,7 @@ Specifics:
 - `test`/`[`: full POSIX expression grammar, including file tests and string/integer comparisons.
 - `read`: `-r`, IFS splitting, multiple variables; byte-at-a-time input avoids consuming subsequent commands' data.
 - M7 implements the special/regular builtin set above except `jobs`, `fg`, `bg` (M8) and optional `ulimit`. `hash` is an explicitly documented no-op, including `hash -r`.
-- `.` searches PATH for slashless names; supplied arguments temporarily replace positional parameters, while an invocation without arguments shares them. Sourced files may return. `eval` parses in the current environment; `exec command` replaces the process without forking, and operand-less `exec` retains redirections.
+- `.` resolves filenames relative to cwd (a requested deviation from POSIX PATH lookup); supplied arguments temporarily replace positional parameters, while an invocation without arguments shares them. Sourced files may return. `eval` parses in the current environment; `exec command` replaces the process without forking, and operand-less `exec` retains redirections.
 - `export`/`readonly -p`, `unset -v/-f`, variable listings and trap listings use shell quoting. Readonly writes fail; direct special-builtin usage/assignment errors abort non-interactive execution. `command` bypasses functions and `-p` changes lookup without changing the child's PATH.
 - `set` supports `-e -u -x -f -n -C`, named options and `pipefail`, positional parameters, and option listings. Startup accepts these options plus `-c`, `-s`, `--`, `-i`, `-l`; interactive UI/job control and login startup files remain M8/M9. Aliases expand at eligible command positions via the lexer/parser hook; M10 enables `expand_aliases` by default for POSIX script behavior.
 - Signal handlers only record pending signals; actions execute between commands in shell context. EXIT actions preserve the prior status unless explicitly overridden. Caught actions reset in subshells/command substitutions; ignored signals remain ignored. A substitution consisting solely of `trap` can inspect the parent's trap list without executing its EXIT action.
@@ -249,7 +249,7 @@ Built on `reedline` (preferred) or `rustyline`.
 - History: file at `~/.local/share/rsh/history`, dedup, timestamps, `Ctrl-R` search.
 - Tab completion: commands (PATH, builtins, functions, aliases), file paths, variables after `$`, and pluggable per-command completion later.
 - Multi-line editing and continuation prompts driven by `ParseError::Incomplete`.
-- Config: `~/.config/rsh/config.sh` is sourced on interactive start. Login shells source `/etc/profile` and `~/.profile`.
+- Config: every top-level invocation recursively sources regular files whose names end in `rsh` under `${XDG_CONFIG_HOME:-$HOME/.config}/rsh`, ordered by full path bytes. Login mode does not automatically load `/etc/profile`, `~/.profile` or Bash configuration files. See section 9.2.
 
 M9 implementation details:
 - Reedline supplies Emacs editing, opt-in `--vi` / `set -o vi`, reverse search,
@@ -341,6 +341,54 @@ startup at 212.89 ms versus 211.84 ms with --no-motd; another run's difference w
 absolute interactive-versus--c startup difference below 1 ms. No unrelated editor
 or test-harness performance refactor is included in this small feature.
 
+### 9.2 User configuration and explicit source commands
+
+Every top-level execution loads the user rsh configuration once before executing
+commands: interactive/login sessions, -c, script files and terminal/nonterminal
+stdin. Internal pipeline/subshell/command-substitution workers inherit the shell
+snapshot and never re-run startup. Parsing-only --dump-ast bypasses startup, and
+-n does not execute configuration commands. The root is XDG_CONFIG_HOME/rsh when
+the variable is nonempty, otherwise HOME/.config/rsh; a missing root is silent.
+
+The current working directory is never scanned for automatic configuration.
+Discovery includes hidden files/directories and filenames ending in the exact
+lowercase byte suffix `rsh` (not only `.rsh`), without requiring executable bits.
+It collects absolute paths before execution and sorts by path bytes, so config
+commands changing cwd cannot break later loads. Recursive traversal uses an
+iterative worklist. Subdirectory symlinks are not followed to avoid cycles;
+symlinks to regular files are accepted, and the root itself may be a symlink.
+Non-regular entries are skipped. Discovery/read/parse/runtime failures warn with
+file context and startup continues with later files. Configuration shares shell
+variables, functions and positional parameters, just like explicit sourcing.
+Use names such as `00-env.rsh`, `aliases.rsh`, or `conf.d/20-functions.rsh`.
+`config.sh` is no longer implicitly loaded; rename it to `config.rsh` to migrate.
+The motd automatic hook still runs only on the top-level terminal REPL path,
+after all configuration files have been processed.
+
+No generic Bash/sh startup files are implicitly read: this includes /etc/profile,
+~/.profile, ~/.bash_profile, ~/.bash_login, ~/.bashrc, ENV and BASH_ENV, even with
+-l or a leading-dash argv[0]. This is an explicit user-selected startup policy;
+login mode still controls unrelated login semantics such as /etc/motd fallback.
+Users may explicitly source a compatible legacy file if they choose.
+
+`source file [args]` is a user-requested regular builtin sharing `.`'s file loader.
+It participates in normal lookup, type/command -v and completion; functions may
+override source. `.` remains a special builtin. By explicit user policy, both
+resolve slashless filenames in the current shell directory without PATH lookup.
+Names containing `/` select relative or absolute paths directly, without any
+restriction to the configuration directory. They execute in the
+current shell, support return, preserve $0, share variables/functions/cwd, and
+restore redirections after returning. With supplied args, rsh restores the
+caller's positional parameters on return; without args, set/shift changes remain.
+This preserves the existing rsh contract even if the sourced file executes set --
+when args were supplied (local Bash instead retains that explicit modification).
+Apple dash-16 also ignores supplied dot arguments, so those cases compare against
+Bash; argument-free dot cases compare against both references. An empty/comment-only
+file returns 0, and the first command of a file observes the caller's prior $?.
+Missing filename/file errors return 1 for source without terminating the shell;
+Dot retains special-builtin error semantics. No parser keyword or dependency is
+introduced for source.
+
 ## 10. Milestones
 
 Each milestone is done only when its tests pass and `cargo clippy -- -D warnings` is clean.
@@ -378,6 +426,9 @@ Each milestone is done only when its tests pass and `cargo clippy -- -D warnings
   - Validation: fmt and strict all-target Clippy pass; cargo test passes 138 tests. Six isolated helper entries are invoked by wrapper tests rather than run concurrently. Eight PTY scenarios pass 20 consecutive full-suite runs on the final code; the pipeline-stop scenario additionally passed 20 isolated repetitions. Both monitored/non-monitored 200-job status checks, PID accuracy, mixed-load no-zombie checks, dash/bash differentials and manual bash interaction comparison pass. CI repeats the PTY suite 20 times on Linux/macOS. Linux cross-target Clippy and fuzz-workspace checks pass; Linux runtime execution is left to CI.
 - [x] **M9 Interactive UX**: section 9 (REPL, history, highlighting, suggestions, completion, continuation prompts).
   - Automated M9 coverage passes: nine UI unit tests, three startup/fallback integration tests, nine real-editor/plain-terminal PTY scenarios, and 173 existing M3–M8 script fixtures rerun with -i and PTY stdin. The full suite has 160 passing tests. The human visual/terminal checklist in tests/pty/MANUAL.md remains explicitly unchecked; it is not represented as automated verification.
+  - [x] **Requested configuration adjunct**: source/. commands, recursive rsh
+    config loading in all top-level modes, and no implicit legacy startup files.
+    Validation: fmt and Clippy pass; full cargo test: 194 passed, 12 ignored.
   - [x] **M9 adjunct: motd**: regular builtin, post-config normal dispatch,
     suppression, safe bounded file reads, terminal sanitizing, and PTY coverage.
 - [ ] **M10 Conformance pass**: run the ported Oils spec-test cases and differential fuzzing; fix or document every deviation.
@@ -497,8 +548,9 @@ parameters PS1/PS2 and shell input/alias rules):
   Huge or slow listings may produce partial results instead of blocking editing.
 - Startup-file failures (including an explicit exit from a startup file) warn and
   return to startup processing, as required for resilient configuration loading.
-  /etc/profile precedes HOME/.profile for -l or a leading-dash argv[0]; interactive
-  configuration then uses XDG_CONFIG_HOME or HOME/.config. Aliases are enabled in
+  The later user-requested policy in section 9.2 replaces the original M9
+  /etc/profile/HOME/.profile sequence with sorted recursive rsh-only config
+  loading in all top-level modes, using XDG_CONFIG_HOME or HOME/.config. Aliases are enabled in
   the interactive parser; parsing/validation/highlighting never performs expansion.
 - PTY fixtures answer one cursor-position query at a time. The first harness used
   an unanchored expectrl regex that consumed several matches and silently lost
@@ -645,3 +697,17 @@ M10 progress (not yet complete):
   now uses genuinely invalid `> >` syntax instead of the newly supported `<<<`.
   No existing Golden stdout was regenerated, no dependency or unsafe code was
   added, and remote Fedora deployment remains unverified.
+
+- User-selected startup policy deviation: section 9.2 deliberately does not follow
+  Bash's login/profile/rc loading rules. Original M9 login tests now assert that
+  legacy profiles are ignored, and fixtures migrated from config.sh to config.rsh.
+  Source/. differential tests preserve known positional-parameter reference
+  differences explicitly instead of changing expected output to match rsh.
+
+- Requested source lookup policy: both `source name` and `. name` read from
+  the current shell directory, without searching PATH. Relative and absolute
+  paths work outside the config tree. This intentionally departs from POSIX dot
+  PATH lookup and Bash PATH-first lookup. Automatic startup never scans cwd.
+  Locked by `tests/source.rs::source_and_dot_resolve_paths_from_cwd_without_path_search`
+  and `tests/source.rs::startup_does_not_source_files_in_cwd`. Existing common
+  differential tests use explicit paths to retain cross-shell comparability.

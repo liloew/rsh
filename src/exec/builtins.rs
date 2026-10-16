@@ -11,7 +11,7 @@ impl Shell {
                     Ok(self.source_flow(&source))
                 }
             }
-            Builtin::Dot => self.dot(args),
+            Builtin::Dot | Builtin::Source => self.dot(args),
             Builtin::Exec => {
                 if args.is_empty() {
                     return Outcome::default();
@@ -72,16 +72,36 @@ impl Shell {
                 flow: Some(flow),
                 ..Outcome::default()
             },
-            Err(e) => Outcome::error(b"builtin", e.to_string().as_bytes(), 1),
+            Err(e) => {
+                let message = match &e {
+                    ExecError::Unsupported(message)
+                        if matches!(builtin, Builtin::Dot | Builtin::Source) =>
+                    {
+                        (*message).to_owned()
+                    }
+                    _ => e.to_string(),
+                };
+                Outcome::error(
+                    match builtin {
+                        Builtin::Dot => b".".as_slice(),
+                        Builtin::Source => b"source".as_slice(),
+                        _ => b"builtin".as_slice(),
+                    },
+                    message.as_bytes(),
+                    1,
+                )
+            }
         }
     }
     fn dot(&mut self, args: &[Vec<u8>]) -> Result<Flow, ExecError> {
         let Some(name) = args.first() else {
-            return Err(ExecError::Unsupported(".: filename required"));
+            return Err(ExecError::Unsupported("filename required"));
         };
-        let Some(path) = builtin_impl::misc::find(name, &self.env, false, false) else {
-            return Err(ExecError::Unsupported(".: file not found"));
-        };
+        use std::os::unix::ffi::OsStrExt;
+        let path = self.env.cwd.join(std::ffi::OsStr::from_bytes(name));
+        if !path.is_file() {
+            return Err(ExecError::Unsupported("file not found"));
+        }
         let source = std::fs::read(&path)?;
         if self.env.source_depth >= 64 {
             return Err(ExecError::Unsupported("source nesting limit exceeded"));

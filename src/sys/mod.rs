@@ -1,6 +1,8 @@
 //! Safe process wrappers. Every child path after fork is allocation/lock free.
 mod builtins;
+mod config;
 mod interactive;
+pub use config::rsh_config_files;
 mod motd;
 pub use motd::{MotdInterrupt, motd_file, motd_hushlogin, motd_interrupted};
 mod jobs;

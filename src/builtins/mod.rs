@@ -12,6 +12,7 @@ use std::path::{Component, Path, PathBuf};
 #[derive(Debug, Clone, Copy)]
 pub enum Builtin {
     Dot,
+    Source,
     Eval,
     Readonly,
     Unset,
@@ -94,6 +95,7 @@ pub fn is_special_name(name: &[u8]) -> bool {
 }
 pub fn regular(name: &[u8]) -> Option<Builtin> {
     match name {
+        b"source" => Some(Builtin::Source),
         b"motd" => Some(Builtin::Motd),
         b"echo" => Some(Builtin::Echo),
         b"printf" => Some(Builtin::Printf),
@@ -190,6 +192,7 @@ pub fn run(builtin: Builtin, args: &[Vec<u8>], env: &mut ShellEnv) -> Outcome {
         },
         Builtin::Hash => Outcome::default(),
         Builtin::Dot
+        | Builtin::Source
         | Builtin::Eval
         | Builtin::Exec
         | Builtin::Type

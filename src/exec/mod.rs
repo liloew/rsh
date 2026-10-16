@@ -323,6 +323,7 @@ impl Shell {
             if matches!(
                 builtin,
                 Builtin::Dot
+                    | Builtin::Source
                     | Builtin::Eval
                     | Builtin::Exec
                     | Builtin::Type
