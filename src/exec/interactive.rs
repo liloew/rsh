@@ -14,6 +14,24 @@ impl Shell {
             },
         )));
     }
+    pub(crate) fn interactive_motd(&mut self) {
+        // Parse a fixed command without aliases, then use the ordinary evaluator:
+        // functions override the regular builtin; no special dispatch shortcut.
+        let Ok(interrupt) = sys::MotdInterrupt::install() else {
+            let _ = sys::write_fd(2, b"rsh: motd: cannot install interrupt handler\n");
+            return;
+        };
+        let original_trap = self.env.traps.get(&sys::INT).cloned();
+        self.motd_startup = true;
+        if let Ok(script) = crate::parser::parse(b"motd") {
+            let _ = self.eval_script(&script);
+        }
+        self.motd_startup = false;
+        drop(interrupt);
+        if original_trap != self.env.traps.get(&sys::INT).cloned() {
+            let _ = sys::trap_signal(sys::INT, self.env.traps.get(&sys::INT).map(Vec::as_slice));
+        }
+    }
     pub(crate) fn interactive_start(&mut self) {
         let _ = self.monitor();
     }

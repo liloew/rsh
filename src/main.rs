@@ -33,10 +33,16 @@ fn run() -> std::io::Result<u8> {
         env.options.login = a.as_bytes().starts_with(b"-");
     }
     let mut dump = false;
+    let mut no_motd = false;
     let mut mode = None;
     let mut end_options = false;
     while let Some(arg) = args.peek() {
         let b = arg.as_bytes();
+        if b == b"--no-motd" {
+            no_motd = true;
+            args.next();
+            continue;
+        }
         if b == b"--vi" {
             env.options.vi = true;
             args.next();
@@ -115,6 +121,7 @@ fn run() -> std::io::Result<u8> {
                 let mut shell = Shell::new(env, std::env::current_exe()?);
                 rsh::interactive::startup(&mut shell);
                 if shell.env.options.interactive && rsh::sys::terminal(0) {
+                    rsh::interactive::startup_motd(&mut shell, no_motd);
                     return Ok(rsh::interactive::run(shell));
                 }
                 return Ok(shell.run_stdin());
@@ -131,7 +138,7 @@ fn run() -> std::io::Result<u8> {
     evaluate(&source, dump, env, false, false)
 }
 fn usage() -> u8 {
-    eprintln!("rsh: arguments: usage: rsh [--dump-ast] [-c command | -s | script]");
+    eprintln!("rsh: arguments: usage: rsh [--dump-ast] [--no-motd] [-c command | -s | script]");
     2
 }
 fn evaluate(

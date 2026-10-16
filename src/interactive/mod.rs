@@ -3,6 +3,7 @@ pub mod completion;
 pub mod highlight;
 pub mod history;
 pub mod prompt;
+pub mod sanitize;
 use crate::{
     exec::{Flow, Shell},
     sys,
@@ -24,8 +25,8 @@ pub fn builtin_names() -> &'static [&'static str] {
     &[
         ":", ".", "alias", "bg", "break", "cd", "command", "continue", "disown", "echo", "eval",
         "exec", "exit", "export", "false", "fg", "getopts", "hash", "history", "jobs", "kill",
-        "printf", "pwd", "read", "readonly", "return", "set", "shift", "test", "[", "times",
-        "trap", "true", "type", "umask", "unalias", "unset", "wait",
+        "motd", "printf", "pwd", "read", "readonly", "return", "set", "shift", "test", "[",
+        "times", "trap", "true", "type", "umask", "unalias", "unset", "wait",
     ]
 }
 #[derive(Debug, PartialEq, Eq)]
@@ -192,6 +193,30 @@ pub fn startup(s: &mut Shell) {
             s.startup_file(&config.join("rsh/config.sh"));
         }
     }
+}
+/// Called only on the top-level terminal REPL path, after configuration.
+pub fn startup_motd(s: &mut Shell, disabled: bool) {
+    if disabled
+        || !s.env.options.interactive
+        || !sys::terminal(0)
+        || s.env.get(b"RSH_NO_MOTD").is_some_and(|v| !v.is_empty())
+        || s.env.get(b"HOME").is_some_and(|home| {
+            sys::motd_hushlogin(
+                &s.env
+                    .cwd
+                    .join(std::ffi::OsStr::from_bytes(home))
+                    .join(".hushlogin"),
+            )
+        })
+    {
+        return;
+    }
+    s.interactive_start();
+    let status = s.env.last_status;
+    let exiting = s.env.exit_requested;
+    s.interactive_motd();
+    s.env.last_status = status;
+    s.env.exit_requested = exiting;
 }
 fn prompt_text(s: &mut Shell) -> String {
     if s.env.get(b"PS1").is_some() {

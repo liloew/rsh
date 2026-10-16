@@ -490,6 +490,9 @@ impl Shell {
         }
     }
     pub(super) fn signals_between_commands(&mut self) -> Option<Flow> {
+        if self.motd_startup && sys::motd_interrupted() {
+            return Some(Flow::Exit((128 + sys::INT) as u8));
+        }
         let signals = sys::pending_signals();
         for n in 1..64 {
             if !self.env.options.interactive && sys::inherited_ignored(n) {

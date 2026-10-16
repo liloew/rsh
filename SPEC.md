@@ -254,6 +254,67 @@ M9 implementation details:
   automated tests do not claim that those manual checks have been performed.
 
 
+### 9.1 Message of the day (`motd`)
+
+`motd` is a regular builtin and is included in type/command lookup, highlighting
+and command completion. Startup invokes a literal `motd` command through section
+6's normal dispatch order, without alias substitution: a configured shell
+function takes precedence. `motd() { :; }` disables its automatic output.
+
+The builtin reads `${XDG_CONFIG_HOME:-$HOME/.config}/rsh/motd` first. When that
+path is absent, a login shell (`-l` or argv[0] starting with `-`) may read
+`/etc/motd`; otherwise it succeeds silently. Empty user files take precedence.
+Missing HOME suppresses the HOME-based lookup; an explicit XDG_CONFIG_HOME still
+works. Relative configured paths resolve against the shell cwd. Unexpected
+operands return 1. A selected but unreadable or non-regular file returns 1 with
+`rsh: motd: <path>: <reason>`; it does not fall through to the system message.
+Final symlinks are followed, using a nonblocking CLOEXEC/NOCTTY open and fstat
+on the opened descriptor before any read. Directories, FIFO, sockets and devices
+are rejected; ownership and world-write permission do not alter selection.
+Read storage is capped at 64 KiB, with a one-byte stack probe to detect truncation;
+truncated output gets an additional newline, including when its last byte was
+already a newline. File-reported sizes never drive allocation.
+
+Only the top-level terminal REPL automatically invokes motd, once, after startup
+files and before the first prompt/editor read. Command/script modes, workers,
+subshells, substitutions and non-TTY `-i` input never invoke it automatically.
+`--no-motd`, nonempty RSH_NO_MOTD, or any existing HOME/.hushlogin directory entry
+(including a symlink) suppress this invocation, without affecting manual calls.
+No function runs in a new background job or implicit subshell: ordinary shell
+function side effects persist. Startup ignores its exit/return status and restores
+the prior `$?` and pending shell-exit request; stderr remains visible. Ctrl-C
+aborts this startup evaluation (including builtin loops), restores the signal
+disposition and permits the first prompt. Explicit INT-trap changes made by the
+function are re-applied after the temporary startup handler is removed.
+
+The byte-stream sanitizer replaces malformed UTF-8 with U+FFFD, removes C0/C1
+controls except newline/tab, and discards OSC/DCS/SOS/PM/APC strings, CSI cursor/
+screen operations, other escape sequences and incomplete trailing sequences.
+Only ESC `[ ... m` SGR with numeric/semicolon/colon parameters survives on TTY
+stdout; non-TTY stdout strips SGR too. C1 CSI/strings are recognized and removed
+(or canonicalized to ESC-form SGR). OSC ends at BEL or ST; other control strings
+end only at ST. User-defined functions retain ordinary output semantics; their
+output is not passed through the file-content sanitizer.
+
+System-message path overrides exist only under cfg(test), using the internal
+RSH_TEST_SYSTEM_MOTD shell variable in unit tests. No production binary, including
+an ordinary debug build, reads that override. This is an M9 adjunct, not M10/M11.
+
+Validation (macOS arm64, stable debug build): sanitizer/unit tests, six builtin
+integration cases and six PTY cases cover file selection, all suppression paths,
+regular-file validation, bounded input, manual/noninteractive invocation, real
+editor Tab completion, function overrides/failure, foreground/negated/builtin-loop
+Ctrl-C cancellation, and SGR versus plain output. Two timing tests are opt-in.
+Final fmt/check, all-target Clippy -D warnings and cargo test pass (179 passed,
+12 ignored helper/benchmark entries); both new opt-in timing tests were also run.
+The direct complete startup hook averaged 15.51 microseconds over 10,000 terminal
+invocations with absent files. This isolates motd's increment from REPL setup.
+A coarse 50-sample process/PTY benchmark measured -c : at 8.33 ms and interactive
+startup at 212.89 ms versus 211.84 ms with --no-motd; another run's difference was
+0.59 ms. These include PTY harness overhead and jitter and do not establish an
+absolute interactive-versus--c startup difference below 1 ms. No unrelated editor
+or test-harness performance refactor is included in this small feature.
+
 ## 10. Milestones
 
 Each milestone is done only when its tests pass and `cargo clippy -- -D warnings` is clean.
@@ -291,6 +352,8 @@ Each milestone is done only when its tests pass and `cargo clippy -- -D warnings
   - Validation: fmt and strict all-target Clippy pass; cargo test passes 138 tests. Six isolated helper entries are invoked by wrapper tests rather than run concurrently. Eight PTY scenarios pass 20 consecutive full-suite runs on the final code; the pipeline-stop scenario additionally passed 20 isolated repetitions. Both monitored/non-monitored 200-job status checks, PID accuracy, mixed-load no-zombie checks, dash/bash differentials and manual bash interaction comparison pass. CI repeats the PTY suite 20 times on Linux/macOS. Linux cross-target Clippy and fuzz-workspace checks pass; Linux runtime execution is left to CI.
 - [x] **M9 Interactive UX**: section 9 (REPL, history, highlighting, suggestions, completion, continuation prompts).
   - Automated M9 coverage passes: nine UI unit tests, three startup/fallback integration tests, nine real-editor/plain-terminal PTY scenarios, and 173 existing M3–M8 script fixtures rerun with -i and PTY stdin. The full suite has 160 passing tests. The human visual/terminal checklist in tests/pty/MANUAL.md remains explicitly unchecked; it is not represented as automated verification.
+  - [x] **M9 adjunct: motd**: regular builtin, post-config normal dispatch,
+    suppression, safe bounded file reads, terminal sanitizing, and PTY coverage.
 - [ ] **M10 Conformance pass**: run the ported Oils spec-test cases and differential fuzzing; fix or document every deviation.
 - [ ] **M11 Optional extensions** (each behind a flag/option): arrays, `[[ ]]`, `local`, `function` keyword, `{a,b}` brace expansion, `<(...)`, `pipefail` default, `select`, `**` globstar.
 

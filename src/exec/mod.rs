@@ -57,6 +57,7 @@ pub struct Shell {
     loop_depth: usize,
     eval_depth: usize,
     pub(super) ignored_errexit: usize,
+    motd_startup: bool,
     command_depth: usize,
     completed: std::collections::BTreeMap<i32, u8>,
     active_assignments: Vec<(Vec<u8>, Vec<u8>)>,
@@ -90,6 +91,7 @@ impl Shell {
             loop_depth: 0,
             eval_depth: 0,
             ignored_errexit,
+            motd_startup: false,
             command_depth: 0,
             completed: std::collections::BTreeMap::new(),
             active_assignments: Vec::new(),
@@ -475,6 +477,10 @@ impl Shell {
         };
         self.command_text = previous;
         self.reap_background();
+        // Startup cancellation must propagate before a `!` can negate SIGINT.
+        if self.motd_startup && flow.status() == (128 + sys::INT) as u8 {
+            return Ok(Flow::Exit(flow.status()));
+        }
         Ok(if let Flow::Status(s) = flow {
             Flow::Status(if pipeline.negated {
                 u8::from(s == 0)

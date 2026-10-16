@@ -1,5 +1,6 @@
 //! POSIX builtin dispatch; execution-context operations live in exec.
 pub mod misc;
+mod motd;
 mod printf;
 mod read;
 mod test;
@@ -16,6 +17,7 @@ pub enum Builtin {
     Unset,
     Times,
     Trap,
+    Motd,
     Echo,
     Printf,
     Test,
@@ -92,6 +94,7 @@ pub fn is_special_name(name: &[u8]) -> bool {
 }
 pub fn regular(name: &[u8]) -> Option<Builtin> {
     match name {
+        b"motd" => Some(Builtin::Motd),
         b"echo" => Some(Builtin::Echo),
         b"printf" => Some(Builtin::Printf),
         b"test" => Some(Builtin::Test),
@@ -144,6 +147,7 @@ impl Outcome {
 
 pub fn run(builtin: Builtin, args: &[Vec<u8>], env: &mut ShellEnv) -> Outcome {
     match builtin {
+        Builtin::Motd => motd::run(args, env),
         Builtin::History | Builtin::Jobs | Builtin::Fg | Builtin::Bg | Builtin::Disown => {
             Outcome::error(b"jobs", b"execution context required", 1)
         }

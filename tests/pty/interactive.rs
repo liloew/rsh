@@ -463,3 +463,15 @@ fn idle_background_notification_redraws_prompt_without_input() {
     ui.prompt();
     ui.close();
 }
+
+#[test]
+fn motd_builtin_tab_completion() {
+    let _pty = crate::PTY_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let mut ui = Ui::new();
+    std::fs::create_dir_all(ui.d.0.join("home/.config/rsh")).unwrap();
+    std::fs::write(ui.d.0.join("home/.config/rsh/motd"), b"TAB-MOTD\n").unwrap();
+    ui.send("mot\t\r").unwrap();
+    ui.until("TAB-MOTD\r\n");
+    ui.prompt();
+    ui.close();
+}
