@@ -161,6 +161,7 @@ pub struct HereDoc {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CompoundCommand {
+    Conditional(Conditional),
     Brace(Script),
     Subshell(Script),
     If {
@@ -199,3 +200,21 @@ pub struct CaseItem {
 }
 
 mod display;
+
+/// Bash-style conditional expressions retain structured, unexpanded operands.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Conditional {
+    Word(Word),
+    Unary {
+        op: Vec<u8>,
+        word: Word,
+    },
+    Binary {
+        left: Word,
+        op: Vec<u8>,
+        right: Word,
+    },
+    Not(Box<Conditional>),
+    And(Box<Conditional>, Box<Conditional>),
+    Or(Box<Conditional>, Box<Conditional>),
+}

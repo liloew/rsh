@@ -76,7 +76,12 @@ command          = simple_command
                  | function_definition ;
 
 compound_command = brace_group | subshell | for_clause | case_clause
-                 | if_clause | while_clause | until_clause ;
+                 | if_clause | while_clause | until_clause | conditional_command ;
+conditional_command = "[[" conditional_or "]]" ;  (* extension: section 6.2 *)
+conditional_or = conditional_and { "||" conditional_and } ;
+conditional_and = conditional_term { "&&" conditional_term } ;
+conditional_term = "!" conditional_term | "(" conditional_or ")"
+                 | WORD | UNARY_OP WORD | WORD BINARY_OP WORD ;
 
 subshell         = "(" compound_list ")" ;
 brace_group      = "{" compound_list "}" ;
@@ -202,8 +207,32 @@ as requested. `set +o here_strings` rejects execution of this redirection before
 expanding its operand; `set -o here_strings` (also accepted at startup) enables it.
 Workers preserve the option. Grammar recognition remains enabled with the option
 off, including -n and unexecuted branches; it is an execution gate, not a claim of
-a strict POSIX parser mode. Only this explicitly requested extension is included;
-other M11 features remain untouched.
+a strict POSIX parser mode. Other extensions require separate explicit requests.
+
+### 6.2 Requested Bash-style conditional expressions
+
+`[[ expression ]]` is a compound command. Structured operands expand only at
+execution time, without field splitting or pathname expansion. Supported syntax
+includes string truth tests, unary/binary predicates, `!`, parentheses, `&&`
+(higher precedence) and `||`, with short-circuit expansion. Empty [[ ]] is a
+syntax error; EOF before closing ]] is incomplete input. Quoted pattern and
+regex fragments match literally.
+
+Unary predicates: `-a -b -c -d -e -f -g -h -k -L -N -O -G -p -r -s -S -t -u
+-w -x -z -n -v -o -R` (-R is false because rsh has no nameref variables).
+Binary predicates: `= == !=` (shell patterns), `< >` (C-locale byte ordering),
+`-eq -ne -lt -le -gt -ge` (existing signed-64-bit arithmetic evaluator),
+`-nt -ot -ef` (file comparisons), and `=~` (POSIX extended regular expressions).
+Success returns 0; false/arithmetic-comparison errors return 1; invalid regex
+returns 2. Expansion failures retain the existing expansion-error policy.
+Redirections, workers, functions, pipelines and AST source roundtrips are supported.
+
+The double_brackets option defaults on for this explicit request. Disabling it
+via set +o double_brackets returns 2 before expansion; recognition stays enabled,
+as with here_strings. Conditions have a 64-token (excluding grouping/newlines) and 64-level bound. This is a
+specified subset, not full Bash compatibility: extglob, arrays/namerefs and
+BASH_REMATCH capture arrays remain unsupported. Arithmetic retains rsh's existing
+grammar/wrapping policy; shell patterns remain byte-based in the C locale.
 
 ## 7. Builtins
 
@@ -211,7 +240,7 @@ other M11 features remain untouched.
 `: . break continue eval exec exit export readonly return set shift times trap unset`
 
 **Regular builtins:**
-`cd pwd echo printf test [ read source type command alias unalias getopts umask wait kill jobs fg bg true false ulimit(later) hash(later)`
+`cd pwd echo printf test [ read source shopt type command alias unalias getopts umask wait kill jobs fg bg true false ulimit(later) hash(later)`
 
 Specifics:
 - `cd`: handle `-`, `CDPATH`, `-L/-P`; update `PWD` and `OLDPWD`.
@@ -225,6 +254,32 @@ Specifics:
 - `set` supports `-e -u -x -f -n -C`, named options and `pipefail`, positional parameters, and option listings. Startup accepts these options plus `-c`, `-s`, `--`, `-i`, `-l`; interactive UI/job control and login startup files remain M8/M9. Aliases expand at eligible command positions via the lexer/parser hook; M10 enables `expand_aliases` by default for POSIX script behavior.
 - Signal handlers only record pending signals; actions execute between commands in shell context. EXIT actions preserve the prior status unless explicitly overridden. Caught actions reset in subshells/command substitutions; ignored signals remain ignored. A substitution consisting solely of `trap` can inspect the parent's trap list without executing its EXIT action.
 - Shell defaults initialize IFS, PATH, prompts, OPTIND/OPTERR, LINENO and PPID when absent, and HOME from passwd when needed. PWD/OLDPWD track directory changes; OPTARG remains unset when no option argument exists.
+
+### 7.1 Requested shopt interface
+
+`shopt [-pqsu] [-o] [name ...]` is a regular builtin: -s enables, -u disables,
+-q queries silently, -p prints reusable commands. With no names, list implemented
+options, filtered by -s/-u when supplied. -o operates on implemented set -o
+options, printing set commands with -p. A query returns 0 only if every selected
+option is on. Conflicting -s/-u returns 1, invalid flags return 2; unknown or
+unimplemented names diagnose and return 1 while valid named options are processed.
+
+Implemented Bash names:
+- expand_aliases: enable/disable alias expansion, including interactive shells.
+- dotglob: include dotfiles in wildcard matches (but not implicit . and ..).
+- nullglob: remove unmatched pathname patterns.
+- failglob: abort the current parsed command unit with status 1 for unmatched
+  pathname patterns; following input lines may still execute, as in Bash.
+  Takes precedence over nullglob.
+- nocasematch: ASCII case-insensitive conditional/case pattern matching and
+  REG_ICASE regex matching. POSIX named character classes retain their meaning.
+- sourcepath: opt into PATH-first source/dot lookup with cwd fallback.
+
+sourcepath defaults off to preserve the explicitly requested cwd-only policy
+(Bash defaults it on); expand_aliases retains its existing on default; other new
+flags default off. Worker snapshots preserve all options. Unsupported Bash names,
+including extglob/globstar/history switches, return errors instead of acting as
+no-ops. Arbitrary .bashrc files are therefore not guaranteed compatible.
 
 ## 8. Job control and signals
 
@@ -373,7 +428,7 @@ Users may explicitly source a compatible legacy file if they choose.
 
 `source file [args]` is a user-requested regular builtin sharing `.`'s file loader.
 It participates in normal lookup, type/command -v and completion; functions may
-override source. `.` remains a special builtin. By explicit user policy, both
+override source. `.` remains a special builtin. By default, per explicit user policy, both
 resolve slashless filenames in the current shell directory without PATH lookup.
 Names containing `/` select relative or absolute paths directly, without any
 restriction to the configuration directory. They execute in the
@@ -433,6 +488,9 @@ Each milestone is done only when its tests pass and `cargo clippy -- -D warnings
     suppression, safe bounded file reads, terminal sanitizing, and PTY coverage.
 - [ ] **M10 Conformance pass**: run the ported Oils spec-test cases and differential fuzzing; fix or document every deviation.
 - [ ] **M11 Optional extensions** (each behind a flag/option): arrays, `[[ ]]`, `local`, `function` keyword, `{a,b}` brace expansion, `<(...)`, `pipefail` default, `select`, `**` globstar.
+  - [x] **Requested adjunct: Bash-style conditionals and shopt subset**: sections
+    6.2/7.1; structured AST, short-circuit evaluation, quoted patterns/ERE, real
+    option semantics, Bash differential tests and parser/lexer fuzz seeds.
   - [x] **Requested adjunct: here-strings** (`here_strings` option): lexer/AST, expansion, ordered redirection, large inputs and Bash differential coverage.
 
 ## 11. Test strategy
@@ -711,3 +769,19 @@ M10 progress (not yet complete):
   Locked by `tests/source.rs::source_and_dot_resolve_paths_from_cwd_without_path_search`
   and `tests/source.rs::startup_does_not_source_files_in_cwd`. Existing common
   differential tests use explicit paths to retain cross-shell comparability.
+
+- Requested conditional/shopt compatibility: sections 6.2/7.1 define the tested
+  subset and limitations. Bash 5.3.15 is the primary local reference; Bash 3.2
+  lacks -v and has older regex quoting behavior. sourcepath defaults off to
+  retain requested cwd-only source/dot lookup. BASH_REMATCH, extglob, arrays and
+  additional shopt names remain unsupported; no option with missing semantics
+  reports success. Added unsafe regex/identity calls live only in src/sys with
+  SAFETY comments. No dependency was added.
+
+- Conditional/shopt final verification: fmt, all-target Clippy -D warnings and
+  full cargo test pass (203 passed, 12 ignored helpers/manual checks). Seven new
+  integration groups cover Bash comparisons, quoting, precedence, file/arithmetic
+  predicates, regex errors, option inheritance/listing, failglob line recovery,
+  sourcepath opt-in, bounds, arbitrary bytes and AST roundtrips. Lexer and parser
+  stable fuzz smoke each completed 20,000 runs without crash/hang/panic; these
+  were not sanitizer/coverage-instrumented campaigns.

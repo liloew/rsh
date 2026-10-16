@@ -8,7 +8,7 @@ fn integer(s: &[u8]) -> Result<i64, &'static str> {
         .and_then(|s| s.parse().ok())
         .ok_or("integer expression expected")
 }
-fn unary(op: &[u8], s: &[u8], env: &ShellEnv) -> Result<bool, &'static str> {
+pub(crate) fn unary(op: &[u8], s: &[u8], env: &ShellEnv) -> Result<bool, &'static str> {
     // Joining an empty operand would silently turn it into the current directory.
     // File predicates must instead test the supplied empty pathname (false).
     if s.is_empty()

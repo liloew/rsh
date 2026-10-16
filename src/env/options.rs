@@ -3,6 +3,12 @@ use super::ShellEnv;
 #[derive(Debug, Clone)]
 pub struct Options {
     pub here_strings: bool,
+    pub double_brackets: bool,
+    pub dotglob: bool,
+    pub nullglob: bool,
+    pub failglob: bool,
+    pub nocasematch: bool,
+    pub sourcepath: bool,
     pub vi: bool,
     pub git_prompt: bool,
     pub monitor: bool,
@@ -19,6 +25,12 @@ impl Default for Options {
     fn default() -> Self {
         Self {
             here_strings: true,
+            double_brackets: true,
+            dotglob: false,
+            nullglob: false,
+            failglob: false,
+            nocasematch: false,
+            sourcepath: false,
             vi: false,
             git_prompt: false,
             monitor: false,
@@ -35,6 +47,12 @@ impl Default for Options {
 }
 pub const NAMES: &[&str] = &[
     "here_strings",
+    "double_brackets",
+    "dotglob",
+    "nullglob",
+    "failglob",
+    "nocasematch",
+    "sourcepath",
     "vi",
     "git_prompt",
     "monitor",
@@ -51,6 +69,13 @@ impl ShellEnv {
     pub fn option(&self, name: &str) -> Option<bool> {
         Some(match name {
             "here_strings" => self.options.here_strings,
+            "double_brackets" => self.options.double_brackets,
+            "dotglob" => self.options.dotglob,
+            "nullglob" => self.options.nullglob,
+            "failglob" => self.options.failglob,
+            "nocasematch" => self.options.nocasematch,
+            "sourcepath" => self.options.sourcepath,
+
             "vi" => self.options.vi,
             "git_prompt" => self.options.git_prompt,
             "monitor" => self.options.monitor,
@@ -68,6 +93,13 @@ impl ShellEnv {
     pub fn set_option(&mut self, name: &str, value: bool) -> bool {
         match name {
             "here_strings" => self.options.here_strings = value,
+            "double_brackets" => self.options.double_brackets = value,
+            "dotglob" => self.options.dotglob = value,
+            "nullglob" => self.options.nullglob = value,
+            "failglob" => self.options.failglob = value,
+            "nocasematch" => self.options.nocasematch = value,
+            "sourcepath" => self.options.sourcepath = value,
+
             "vi" => self.options.vi = value,
             "git_prompt" => self.options.git_prompt = value,
             "monitor" => self.options.monitor = value,

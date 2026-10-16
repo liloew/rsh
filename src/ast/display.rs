@@ -129,6 +129,11 @@ fn compound_source<'a>(
     pending: &mut Vec<&'a HereDoc>,
 ) {
     match value {
+        CompoundCommand::Conditional(expr) => {
+            out.extend_from_slice(b"[[ ");
+            conditional(expr, out);
+            out.extend_from_slice(b" ]]");
+        }
         CompoundCommand::Brace(body) => {
             out.extend_from_slice(b"{ ");
             script(body, out, pending);
@@ -260,6 +265,49 @@ fn parts(value: &[WordPart], out: &mut Vec<u8>) {
                 GlobChar::Question => b'?',
                 GlobChar::OpenBracket => b'[',
             }),
+        }
+    }
+}
+
+fn conditional(value: &Conditional, out: &mut Vec<u8>) {
+    match value {
+        Conditional::Word(word) => parts(&word.0, out),
+        Conditional::Unary { op, word } => {
+            out.extend(op);
+            out.push(b' ');
+            parts(&word.0, out);
+        }
+        Conditional::Binary { left, op, right } => {
+            parts(&left.0, out);
+            out.push(b' ');
+            out.extend(op);
+            out.push(b' ');
+            if op == b"=~" {
+                for part in &right.0 {
+                    if let WordPart::Literal(bytes) = part {
+                        out.extend(bytes);
+                    } else {
+                        parts(std::slice::from_ref(part), out);
+                    }
+                }
+            } else {
+                parts(&right.0, out);
+            }
+        }
+        Conditional::Not(expr) => {
+            out.extend(b"! ");
+            conditional(expr, out);
+        }
+        Conditional::And(left, right) | Conditional::Or(left, right) => {
+            out.extend(b"( ");
+            conditional(left, out);
+            out.extend(if matches!(value, Conditional::And(..)) {
+                b" && "
+            } else {
+                b" || "
+            });
+            conditional(right, out);
+            out.extend(b" )");
         }
     }
 }

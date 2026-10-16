@@ -3,6 +3,7 @@ use crate::ast::*;
 fn visit(script: &mut Script, action: &mut impl FnMut(&mut usize)) {
     fn compound(c: &mut CompoundCommand, a: &mut impl FnMut(&mut usize)) {
         match c {
+            CompoundCommand::Conditional(_) => {}
             CompoundCommand::Brace(s)
             | CompoundCommand::Subshell(s)
             | CompoundCommand::For { body: s, .. } => visit(s, a),

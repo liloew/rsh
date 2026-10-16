@@ -26,7 +26,7 @@ fn class(name: &[u8], b: u8) -> bool {
         _ => false,
     }
 }
-fn member(bytes: &[(u8, bool)], b: u8) -> bool {
+fn member(bytes: &[(u8, bool)], b: u8, ignore_case: bool) -> bool {
     let mut i = 0;
     while let Some(&(c, _)) = bytes.get(i) {
         if bytes.get(i..i + 2) == Some(&[(b'[', false), (b':', false)])
@@ -50,12 +50,16 @@ fn member(bytes: &[(u8, bool)], b: u8) -> bool {
         } else if bytes.get(i + 1) == Some(&(b'-', false))
             && let Some(&(end, _)) = bytes.get(i + 2)
         {
-            if c <= b && b <= end {
+            if c <= b && b <= end
+                || ignore_case
+                    && c.to_ascii_lowercase() <= b.to_ascii_lowercase()
+                    && b.to_ascii_lowercase() <= end.to_ascii_lowercase()
+            {
                 return true;
             }
             i += 3;
         } else {
-            if c == b {
+            if c == b || ignore_case && c.eq_ignore_ascii_case(&b) {
                 return true;
             }
             i += 1;
@@ -116,6 +120,9 @@ pub fn compile(bytes: &[(u8, bool)]) -> Vec<Atom> {
     out
 }
 pub fn matches(pattern: &[Atom], text: &[u8]) -> bool {
+    matches_case(pattern, text, false)
+}
+pub fn matches_case(pattern: &[Atom], text: &[u8], ignore_case: bool) -> bool {
     // Iterative dynamic programming bounds stack use even for adversarial patterns.
     let mut prev = vec![false; text.len() + 1];
     if let Some(v) = prev.first_mut() {
@@ -133,9 +140,11 @@ pub fn matches(pattern: &[Atom], text: &[u8]) -> bool {
                     i > 0
                         && prev.get(i - 1).copied().unwrap_or(false)
                         && text.get(i - 1).is_some_and(|&b| match atom {
-                            Atom::Byte(c) => *c == b,
+                            Atom::Byte(c) => *c == b || ignore_case && c.eq_ignore_ascii_case(&b),
                             Atom::Any => true,
-                            Atom::Class { negative, bytes } => member(bytes, b) != *negative,
+                            Atom::Class { negative, bytes } => {
+                                member(bytes, b, ignore_case) != *negative
+                            }
                             _ => false,
                         })
                 }

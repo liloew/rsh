@@ -3,7 +3,8 @@ pub mod misc;
 mod motd;
 mod printf;
 mod read;
-mod test;
+mod shopt;
+pub(crate) mod test;
 pub mod variables;
 use crate::env::ShellEnv;
 use std::os::unix::ffi::OsStrExt;
@@ -13,6 +14,7 @@ use std::path::{Component, Path, PathBuf};
 pub enum Builtin {
     Dot,
     Source,
+    Shopt,
     Eval,
     Readonly,
     Unset,
@@ -95,6 +97,7 @@ pub fn is_special_name(name: &[u8]) -> bool {
 }
 pub fn regular(name: &[u8]) -> Option<Builtin> {
     match name {
+        b"shopt" => Some(Builtin::Shopt),
         b"source" => Some(Builtin::Source),
         b"motd" => Some(Builtin::Motd),
         b"echo" => Some(Builtin::Echo),
@@ -149,6 +152,7 @@ impl Outcome {
 
 pub fn run(builtin: Builtin, args: &[Vec<u8>], env: &mut ShellEnv) -> Outcome {
     match builtin {
+        Builtin::Shopt => shopt::run(args, env),
         Builtin::Motd => motd::run(args, env),
         Builtin::History | Builtin::Jobs | Builtin::Fg | Builtin::Bg | Builtin::Disown => {
             Outcome::error(b"jobs", b"execution context required", 1)

@@ -1,4 +1,5 @@
 //! Hand-written recursive descent for SPEC 4.1; no execution or expansion.
+mod conditional;
 pub mod locations;
 use crate::ast::*;
 use crate::lexer::{self, LexError, Operator as Op, Token, TokenKind};
@@ -313,6 +314,7 @@ impl Parser<'_> {
             self.expect_op(Op::RightParen)?;
             self.linebreak();
             if !self.op(Op::LeftParen)
+                && !self.conditional_marker(b"[[")
                 && ![b"{".as_slice(), b"if", b"while", b"until", b"for", b"case"]
                     .iter()
                     .any(|w| self.keyword(w))
@@ -328,7 +330,10 @@ impl Parser<'_> {
                 definition: Function { body, redirs },
             });
         }
-        let compound = if self.take_op(Op::LeftParen) {
+        let compound = if self.conditional_marker(b"[[") {
+            self.advance();
+            Some(CompoundCommand::Conditional(self.conditional()?))
+        } else if self.take_op(Op::LeftParen) {
             let body = self.list(&[], Some(Op::RightParen), false, depth + 1)?;
             self.expect_op(Op::RightParen)?;
             Some(CompoundCommand::Subshell(body))
@@ -358,6 +363,7 @@ impl Parser<'_> {
         } else {
             if [
                 b"then".as_slice(),
+                b"]]",
                 b"elif",
                 b"else",
                 b"fi",

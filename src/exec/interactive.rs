@@ -46,8 +46,17 @@ impl Shell {
             self.env
                 .set(b"LINES".to_vec(), rows.to_string().into_bytes());
         }
-        let script = crate::parser::parse_at(source, Some(&self.env.aliases), base)?;
+        let script = crate::parser::parse_at(
+            source,
+            if self.env.options.expand_aliases {
+                Some(&self.env.aliases)
+            } else {
+                None
+            },
+            base,
+        )?;
         let flow = self.eval_script(&script);
+        let flow = self.recover_line_abort(flow);
         self.env.last_status = flow.status();
         Ok(flow)
     }

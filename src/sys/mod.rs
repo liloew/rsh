@@ -1,6 +1,8 @@
 //! Safe process wrappers. Every child path after fork is allocation/lock free.
 mod builtins;
 mod config;
+mod regex;
+pub use regex::regex_matches;
 mod interactive;
 pub use config::rsh_config_files;
 mod motd;

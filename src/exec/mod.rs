@@ -1,5 +1,6 @@
 //! AST execution with expansion, redirections, control flow and functions.
 mod builtins;
+mod conditional;
 mod control;
 mod interactive;
 mod jobs;
@@ -58,6 +59,7 @@ pub struct Shell {
     eval_depth: usize,
     pub(super) ignored_errexit: usize,
     motd_startup: bool,
+    abort_line: bool,
     command_depth: usize,
     completed: std::collections::BTreeMap<i32, u8>,
     active_assignments: Vec<(Vec<u8>, Vec<u8>)>,
@@ -92,6 +94,7 @@ impl Shell {
             eval_depth: 0,
             ignored_errexit,
             motd_startup: false,
+            abort_line: false,
             command_depth: 0,
             completed: std::collections::BTreeMap::new(),
             active_assignments: Vec::new(),
@@ -108,6 +111,16 @@ impl Shell {
             && matches!(item.and_or.first.commands.as_slice(),[Command::Simple(_)]));
         let flow = self.eval_script(script);
         self.finish(flow)
+    }
+    fn recover_line_abort(&mut self, flow: Flow) -> Flow {
+        if self.abort_line && self.env.source_depth == 0 {
+            self.abort_line = false;
+            self.env.exit_requested = None;
+            self.env.last_status = flow.status();
+            Flow::Status(flow.status())
+        } else {
+            flow
+        }
     }
     fn eval_script(&mut self, script: &Script) -> Flow {
         if self.eval_depth >= 128 {
@@ -866,6 +879,7 @@ impl Shell {
             mode,
         );
         if let Err(error) = &result {
+            self.abort_line |= error.abort_line;
             self.env.exit_requested = Some(error.status);
         }
         Ok(result?)

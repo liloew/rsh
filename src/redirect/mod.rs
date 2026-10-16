@@ -189,6 +189,7 @@ pub fn source_floor(script: &crate::ast::Script, env: &ShellEnv) -> i32 {
 fn compound_floor(compound: &crate::ast::CompoundCommand, env: &ShellEnv) -> i32 {
     use crate::ast::CompoundCommand::*;
     match compound {
+        Conditional(_) => 20,
         Brace(b) | Subshell(b) | For { body: b, .. } => source_floor(b, env),
         While { condition, body } | Until { condition, body } => {
             source_floor(condition, env).max(source_floor(body, env))

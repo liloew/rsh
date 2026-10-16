@@ -147,3 +147,8 @@ impl EditorDescriptors {
         drop(self.held);
     }
 }
+
+pub fn effective_gid() -> u32 {
+    // SAFETY: getegid has no arguments or memory effects.
+    unsafe { libc::getegid() }
+}

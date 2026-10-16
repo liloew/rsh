@@ -9,18 +9,21 @@ use std::os::unix::ffi::OsStrExt;
 pub struct ExpandError {
     pub message: String,
     pub status: u8,
+    pub abort_line: bool,
 }
 impl ExpandError {
     pub fn readonly(s: impl Into<String>) -> Self {
         Self {
             message: s.into(),
             status: 1,
+            abort_line: false,
         }
     }
     pub fn new(s: impl Into<String>) -> Self {
         Self {
             message: s.into(),
             status: 2,
+            abort_line: false,
         }
     }
 }
@@ -86,7 +89,7 @@ pub fn word(
         };
         for f in fields {
             if mode == Mode::Argument && !env.noglob {
-                out.extend(glob(&f, &env.cwd));
+                out.extend(glob(&f, env)?);
             } else {
                 out.push(f.raw());
             }
@@ -553,7 +556,8 @@ fn split(field: Field, ifs: &[u8]) -> Vec<Field> {
     }
     out
 }
-fn glob(field: &Field, cwd: &std::path::Path) -> Vec<Vec<u8>> {
+fn glob(field: &Field, env: &ShellEnv) -> Result<Vec<Vec<u8>>, ExpandError> {
+    let cwd = &env.cwd;
     let cleaned = Field {
         bytes: field
             .bytes
@@ -568,11 +572,12 @@ fn glob(field: &Field, cwd: &std::path::Path) -> Vec<Vec<u8>> {
         .iter()
         .any(|b| !b.quoted && matches!(b.value, b'*' | b'?' | b'['))
     {
-        return vec![field.raw()];
+        return Ok(vec![field.raw()]);
     }
     let absolute = field.bytes.first().is_some_and(|b| b.value == b'/');
     let trailing = field.bytes.last().is_some_and(|b| b.value == b'/');
     let mut paths = vec![if absolute { b"/".to_vec() } else { Vec::new() }];
+    let mut has_magic = false;
     for component in field
         .bytes
         .split(|b| b.value == b'/')
@@ -585,6 +590,7 @@ fn glob(field: &Field, cwd: &std::path::Path) -> Vec<Vec<u8>> {
                 .collect::<Vec<_>>(),
         );
         let magic = pat.iter().any(|a| !matches!(a, pattern::Atom::Byte(_)));
+        has_magic |= magic;
         let mut next = Vec::new();
         for base in paths {
             let path = if absolute {
@@ -600,7 +606,9 @@ fn glob(field: &Field, cwd: &std::path::Path) -> Vec<Vec<u8>> {
                     .filter_map(Result::ok)
                     .map(|e| e.file_name().as_bytes().to_vec())
                     .filter(|n| {
-                        (!n.starts_with(b".") || component.first().is_some_and(|b| b.value == b'.'))
+                        (env.options.dotglob && n != b"." && n != b".."
+                            || !n.starts_with(b".")
+                            || component.first().is_some_and(|b| b.value == b'.'))
                             && pattern::matches(&pat, n)
                     })
                     .collect::<Vec<_>>()
@@ -631,7 +639,21 @@ fn glob(field: &Field, cwd: &std::path::Path) -> Vec<Vec<u8>> {
         }
     });
     if paths.is_empty() {
-        vec![field.raw()]
+        if !has_magic {
+            return Ok(vec![field.raw()]);
+        }
+        if env.options.failglob {
+            return Err(ExpandError {
+                message: "no match: pathname expansion".to_owned(),
+                status: 1,
+                abort_line: true,
+            });
+        }
+        Ok(if env.options.nullglob {
+            Vec::new()
+        } else {
+            vec![field.raw()]
+        })
     } else {
         if trailing {
             for p in &mut paths {
@@ -639,7 +661,7 @@ fn glob(field: &Field, cwd: &std::path::Path) -> Vec<Vec<u8>> {
             }
         }
         paths.sort();
-        paths
+        Ok(paths)
     }
 }
 fn decode_backtick(source: &[u8], quoted: bool) -> Vec<u8> {
@@ -660,6 +682,27 @@ fn decode_backtick(source: &[u8], quoted: bool) -> Vec<u8> {
         i += 1;
     }
     out
+}
+
+/// Quote-protected regular expression characters must remain literal ERE text.
+pub fn regex_pattern(
+    word: &Word,
+    env: &mut ShellEnv,
+    sub: &mut Substitute<'_>,
+) -> Result<Vec<u8>, ExpandError> {
+    let fields = render(&word.0, env, sub, false, Mode::Pattern, 0)?;
+    let mut out = Vec::new();
+    for byte in fields
+        .iter()
+        .flat_map(|field| &field.bytes)
+        .filter(|b| !b.empty_quote)
+    {
+        if byte.quoted && b".[]\\*^$()+?{}|".contains(&byte.value) {
+            out.push(b'\\');
+        }
+        out.push(byte.value);
+    }
+    Ok(out)
 }
 
 #[cfg(test)]

@@ -1,0 +1,3 @@
+shopt -s nullglob nocasematch
+if [[ -n "$x" && ( $x == [[:alpha:]]* || $x =~ ^a(b|c)+$ ) ]]; then :; fi
+f() { [[ "$1" != 'a*' ]]; }; f x | cat

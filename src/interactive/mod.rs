@@ -25,8 +25,8 @@ pub fn builtin_names() -> &'static [&'static str] {
     &[
         ":", ".", "alias", "bg", "break", "cd", "command", "continue", "disown", "echo", "eval",
         "exec", "exit", "export", "false", "fg", "getopts", "hash", "history", "jobs", "kill",
-        "motd", "printf", "pwd", "read", "readonly", "return", "set", "shift", "source", "test",
-        "[", "times", "trap", "true", "type", "umask", "unalias", "unset", "wait",
+        "motd", "printf", "pwd", "read", "readonly", "return", "set", "shift", "shopt", "source",
+        "test", "[", "times", "trap", "true", "type", "umask", "unalias", "unset", "wait",
     ]
 }
 #[derive(Debug, PartialEq, Eq)]

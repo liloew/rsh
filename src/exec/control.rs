@@ -48,6 +48,7 @@ impl Shell {
     }
     fn compound(&mut self, compound: &CompoundCommand) -> Result<Flow, ExecError> {
         Ok(match compound {
+            CompoundCommand::Conditional(expr) => return self.eval_conditional(expr),
             CompoundCommand::Brace(body) => self.eval_script(body),
             CompoundCommand::Subshell(body) => {
                 let process = self.worker_process(body, false, sys::closed_stdio(), 0)?;
@@ -89,7 +90,11 @@ impl Shell {
                 for item in items {
                     for pattern in &item.patterns {
                         let pattern = self.case_pattern(pattern)?;
-                        if crate::expand::pattern::matches(&pattern, &value) {
+                        if crate::expand::pattern::matches_case(
+                            &pattern,
+                            &value,
+                            self.env.options.nocasematch,
+                        ) {
                             return Ok(if item.body.0.is_empty() {
                                 Flow::Status(0)
                             } else {
@@ -156,7 +161,7 @@ impl Shell {
         self.loop_depth -= 1;
         result.unwrap_or(Flow::Status(status))
     }
-    fn case_pattern(
+    pub(super) fn case_pattern(
         &mut self,
         word: &Word,
     ) -> Result<Vec<crate::expand::pattern::Atom>, ExecError> {

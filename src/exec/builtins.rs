@@ -98,7 +98,12 @@ impl Shell {
             return Err(ExecError::Unsupported("filename required"));
         };
         use std::os::unix::ffi::OsStrExt;
-        let path = self.env.cwd.join(std::ffi::OsStr::from_bytes(name));
+        let path = if self.env.options.sourcepath && !name.contains(&b'/') {
+            builtin_impl::misc::find(name, &self.env, false, false)
+                .unwrap_or_else(|| self.env.cwd.join(std::ffi::OsStr::from_bytes(name)))
+        } else {
+            self.env.cwd.join(std::ffi::OsStr::from_bytes(name))
+        };
         if !path.is_file() {
             return Err(ExecError::Unsupported("file not found"));
         }
@@ -185,7 +190,7 @@ impl Shell {
             }
             let parsed = crate::parser::parse_at(
                 &source,
-                if self.env.options.expand_aliases || self.env.options.interactive {
+                if self.env.options.expand_aliases {
                     Some(&self.env.aliases)
                 } else {
                     None
@@ -197,6 +202,7 @@ impl Shell {
                     self.env.stdin_source = true;
                     let old = self.env.stdin_lines;
                     flow = self.eval_script(&script);
+                    flow = self.recover_line_abort(flow);
                     self.env.stdin_source = false;
                     base += source.iter().filter(|b| **b == b'\n').count()
                         + self.env.stdin_lines.saturating_sub(old);
@@ -244,7 +250,7 @@ impl Shell {
             }
             let parsed = crate::parser::parse_at(
                 chunk,
-                if self.env.options.expand_aliases || self.env.options.interactive {
+                if self.env.options.expand_aliases {
                     Some(&self.env.aliases)
                 } else {
                     None
@@ -257,6 +263,7 @@ impl Shell {
                         && (!self.env.options.noexec || self.env.options.interactive)
                     {
                         flow = self.eval_script(&script);
+                        flow = self.recover_line_abort(flow);
                     }
                     base += chunk.iter().filter(|b| **b == b'\n').count();
                     start = end;
