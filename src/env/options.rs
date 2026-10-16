@@ -1,6 +1,6 @@
 //! Shell options shared by startup parsing and the set builtin.
 use super::ShellEnv;
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub struct Options {
     pub vi: bool,
     pub git_prompt: bool,
@@ -13,6 +13,23 @@ pub struct Options {
     pub interactive: bool,
     pub login: bool,
     pub expand_aliases: bool,
+}
+impl Default for Options {
+    fn default() -> Self {
+        Self {
+            vi: false,
+            git_prompt: false,
+            monitor: false,
+            errexit: false,
+            nounset: false,
+            xtrace: false,
+            noexec: false,
+            pipefail: false,
+            interactive: false,
+            login: false,
+            expand_aliases: true,
+        }
+    }
 }
 pub const NAMES: &[&str] = &[
     "vi",

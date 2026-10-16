@@ -59,7 +59,7 @@ Follow POSIX token recognition (section 2.3 of the standard):
 5. Comments: `#` at the start of a word to end of line.
 6. Here-documents: after the lexer sees `<<` or `<<-` with a delimiter, the body is read after the next newline. Quoted delimiter means no expansion in the body. `<<-` strips leading tabs.
 7. Reserved words are recognized only in command position: `if then elif else fi do done case esac while until for in { } ! function`(`function` is an extension, off by default).
-8. Aliases are expanded in command position, before reserved-word recognition, only in interactive mode or when `expand_aliases` is set.
+8. Aliases are expanded in command position, before reserved-word recognition. `expand_aliases` defaults on, including script mode (POSIX 2.3.1); disabling it is an extension.
 
 ## 4. Grammar
 
@@ -196,7 +196,7 @@ Specifics:
 - M7 implements the special/regular builtin set above except `jobs`, `fg`, `bg` (M8) and optional `ulimit`. `hash` is an explicitly documented no-op, including `hash -r`.
 - `.` searches PATH for slashless names; supplied arguments temporarily replace positional parameters, while an invocation without arguments shares them. Sourced files may return. `eval` parses in the current environment; `exec command` replaces the process without forking, and operand-less `exec` retains redirections.
 - `export`/`readonly -p`, `unset -v/-f`, variable listings and trap listings use shell quoting. Readonly writes fail; direct special-builtin usage/assignment errors abort non-interactive execution. `command` bypasses functions and `-p` changes lookup without changing the child's PATH.
-- `set` supports `-e -u -x -f -n -C`, named options and `pipefail`, positional parameters, and option listings. Startup accepts these options plus `-c`, `-s`, `--`, `-i`, `-l`; interactive UI/job control and login startup files remain M8/M9. Aliases expand only with interactive mode or `set -o expand_aliases`, at eligible command positions via the lexer/parser hook.
+- `set` supports `-e -u -x -f -n -C`, named options and `pipefail`, positional parameters, and option listings. Startup accepts these options plus `-c`, `-s`, `--`, `-i`, `-l`; interactive UI/job control and login startup files remain M8/M9. Aliases expand at eligible command positions via the lexer/parser hook; M10 enables `expand_aliases` by default for POSIX script behavior.
 - Signal handlers only record pending signals; actions execute between commands in shell context. EXIT actions preserve the prior status unless explicitly overridden. Caught actions reset in subshells/command substitutions; ignored signals remain ignored. A substitution consisting solely of `trap` can inspect the parent's trap list without executing its EXIT action.
 - Shell defaults initialize IFS, PATH, prompts, OPTIND/OPTERR, LINENO and PPID when absent, and HOME from passwd when needed. PWD/OLDPWD track directory changes; OPTARG remains unset when no option argument exists.
 
@@ -333,7 +333,7 @@ M2 source rendering normalizes optional pattern parentheses, final `;;`, and seq
 M3 execution choices (SPEC 6; POSIX 2.9.1.2, 2.9.2, 2.9.3.1):
 - `A=1 :` persists the assignment, but a previously unexported variable remains unexported. dash behaves this way on the reference host; bash --posix adds an export attribute. POSIX explicitly leaves acquisition/persistence of this attribute unspecified for special-builtin prefixes. rsh preserves the existing flag; `export` explicitly sets it. The difference is pinned by the header in `tests/diff/exec/special-prefix.sh` and asserted separately in `tests/exec_diff.rs`.
 - Signal termination is represented as 128+N. bash may replace its own process with the last external command, causing the reference process itself to die by signal rather than return a numeric code. Differential tests normalize both forms to 128+N, and normalize shell-specific diagnostic prefixes/signal notices. `env | grep a` enumeration order is normalized by sorting just that fixture's lines, without dropping variables.
-- PATH unset uses `/usr/bin:/bin`; an empty PATH component searches the current (logical shell) directory. EACCES candidates do not prevent searching later PATH entries. Missing commands return 127, found-but-unexecutable commands return 126. Executable files requiring ENOEXEC interpreter fallback currently return 126; that POSIX fallback remains a conformance gap for a later milestone (no fallback to sh/bash/dash is introduced).
+- PATH unset uses `/usr/bin:/bin`; an empty PATH component searches the current (logical shell) directory. EACCES candidates do not prevent searching later PATH entries. Missing commands return 127, found-but-unexecutable commands return 126. M10 closes the ENOEXEC text-script fallback gap by re-executing rsh itself with the candidate script and original arguments. All fallback argv storage is prepared before fork; no sh/bash/dash delegation is introduced.
 - Shell variables and cwd are stored in `ShellEnv`, without mutating the host process's global environment or cwd. `cd` updates logical PWD/OLDPWD; each child changes to the stored cwd before execution. CDPATH and remaining builtin options are M7 work.
 - The old CLI test's unquoted awk program is now quoted because M3 uses the actual lexer/parser; no-argument invocation is now tested as stdin mode rather than invalid usage. Existing lexer/parser goldens remain unchanged.
 
@@ -363,7 +363,7 @@ M6 control-flow/functions results and choices (SPEC 4.1, 6, 7; POSIX 2.9.4, 2.9.
 - return outside a function/source context diagnoses and returns 1, per the task and bash; dash instead stops a top-level script with the requested return status (e.g. return 7). No dot-source support is added ahead of M7. return inside a function defaults to the previous status; explicit signed numeric values are reduced modulo 256, consistent with the existing exit numeric policy.
 - shift overflow preserves the argument list, diagnoses and returns 1 without aborting, as specifically requested and as bash behaves. dash instead aborts with status 2. Zero shift succeeds; non-decimal counts and extra operands diagnose/status 1. Reference disagreement tests assert statuses/output separately, not by discarding diagnostics.
 - Function-prefix assignments are scoped and restored, including attributes, following dash; shared variables without a prefix remain global. POSIX leaves aspects of function-prefix persistence unspecified; bash --posix can retain such assignments. Function definition itself neither evaluates nor applies redirections; definition redirections are expanded on each call using that call's parameters, inside call-site redirections.
-- Per the task's strict brace-closing rule, a closing } requires an explicit list separator (semicolon/newline, or the POSIX background separator). rsh rejects { (true) } although POSIX token recognition/reference shells can accept a closing reserved word after an already-delimited compound command. The existing permissive closing-keyword behavior for if/loop productions is retained. This is a deliberate M6 grammar restriction, pinned by parser tests.
+- M10 removes M6's stricter brace-closing restriction: POSIX 2.10.2 permits { (true) } after an already delimited compound command. Simple-command endings still require a separator to recognize the closing reserved word. The parser regression now checks the accepted form and AST round-trip, matching both references.
 - New parser functions.ast expectations were inspected: f has a Brace body and unevaluated $1/$2 with an attached output redirection; g has an If body calling f. Existing lexer/parser/redirection/execution golden expectations were not regenerated or changed. Control .out expectations were written explicitly and compared with both reference shells; wc output was avoided because its padding differs between macOS/Linux.
 - Deferred explicitly: tests/control.rs::pipeline_while_read is ignored with TODO(M7) until read exists. Trap mutation cannot yet be exercised because trap is also M7; subshell execution already has an independent process/state boundary for its future trap state. No other M7 builtin or option implementation is introduced.
 
@@ -483,13 +483,13 @@ M10 progress (not yet complete):
   prevented valid forks; the test helper now caps it at 1024 (or the existing hard
   limit). CPU/file limits apply on both platforms; Linux additionally caps address
   space. No M10 completion checkbox is checked and no M11 work is introduced.
-- Step 2 adds 845 original POSIX-derived matrix cases (847 with the bootstrap
+- Step 2 adds 745 original POSIX-derived matrix cases (747 with the bootstrap
   cases), with a checked-in deterministic authoring source. Coverage counts:
   quoting 52; reserved words/aliases 30; parameters 60; expansion 120;
   splitting/globbing 70; redirections/heredocs 70; status/errors 40; commands 80;
   syntax 30; builtins 120; options 45; non-interactive jobs/signals 30.
   No Oils code or tests were copied. All areas were reference-verified before
-  using rsh results: 1,689 reference passes, five explicit dash pipefail skips.
+  using rsh results: 1,489 reference passes, five explicit dash pipefail skips.
 - Reference decisions: POSIX 2.6.4/C arithmetic short-circuiting excludes an
   unreachable division by zero. Apple bash 3.2 instead reports that division;
   five arithmetic precedence cases retain the normative dash output and an
@@ -498,3 +498,30 @@ M10 progress (not yet complete):
   required to be nonzero, so unalias tests inspect success/failure rather than
   assuming bash's status 1 (dash returns 127). Pattern fixtures use a dedicated
   subdirectory so the runner's script/HOME files cannot contaminate matches.
+- Step 3 fixes the four groups exposed by the initial 726/747 rsh result:
+  physical backslash-newline continuations are retained across input units
+  (file/source and stdin); aliases default on in scripts; ENOEXEC text scripts
+  re-enter rsh with the original arguments, including exec/PATH forms; and a
+  closing brace is accepted after an already delimited compound command.
+  These changes follow POSIX 2.2.1, 2.3.1, 2.9.1.6 and 2.10.2 respectively.
+  No AST/token type or public module boundary was changed. The reviewed M6
+  negative parser assertion now tests acceptance/round-trip, and the reviewed
+  M7 alias assertion tests both the POSIX default and explicit opt-out.
+- Three additional reference-verified ENOEXEC regressions bring the suite to
+  750 cases. rsh passes all 750, with no KNOWN_FAILURES entries. A stdin
+  continuation regression also compares both reference shells, including a
+  backslash at the end of a comment. These results do not satisfy the remaining
+  M10 fuzz-budget, robustness, performance and fresh-clone exit criteria.
+- Initial instrumented cargo-fuzz smoke runs (nightly test toolchain only):
+  lexer 1,163,413 executions and parser 537,807 executions, each reporting 61
+  seconds elapsed, with no crash/timeout/panic finding. This is not the required
+  24 CPU-hour campaign, and is not represented as having completed that budget.
+- Count correction: the step-2 commit subject mistakenly says 847; its actual
+  case count was 747. The per-area counts above and machine-readable reports
+  are authoritative. The final 750-case reference run has 1,495 passes and
+  five dash pipefail skips (1,500 total reference executions).
+- Step-3 validation: cargo fmt --all / --check, all-target Clippy -D warnings,
+  and cargo test pass (162 passed; 10 existing ignored helper/benchmark entries).
+  No golden output files were changed. The new 750-case spec run passes with
+  no unexpected or stale failures; the complete two-reference verification also
+  passes under the recorded versions. M10 remains unchecked.

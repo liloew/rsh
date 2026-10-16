@@ -200,3 +200,33 @@ fn path_permission_fallback_is_scoped_and_byte_environment_survives() {
     assert_eq!(out.status.code(), Some(1));
     assert!(out.stderr.windows(3).any(|s| s == b"NUL"));
 }
+
+#[test]
+fn physical_continuations_do_not_end_stdin_commands() {
+    use std::io::Write;
+    use std::process::Stdio;
+    let dir = TempDir::new();
+    dir.fixtures();
+    for shell in [env!("CARGO_BIN_EXE_rsh"), "/bin/dash", "/bin/bash"] {
+        let mut command = dir.command(shell);
+        if shell == "/bin/bash" {
+            command.arg("--posix");
+        }
+        let mut child = command
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap();
+        child
+            .stdin
+            .take()
+            .unwrap()
+            .write_all(b"printf '%s\\n' ab\\\ncd ''\n# a comment\\\nprintf 'after\\n'\n")
+            .unwrap();
+        let output = child.wait_with_output().unwrap();
+        assert!(output.status.success(), "{shell}: {output:?}");
+        assert_eq!(output.stdout, b"abcd\n\nafter\n", "{shell}");
+        assert!(output.stderr.is_empty(), "{shell}: {output:?}");
+    }
+}

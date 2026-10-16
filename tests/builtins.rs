@@ -328,6 +328,10 @@ fn aliases_are_eligible_only_when_enabled_and_cycle_safe() {
     let d = setup();
     let source = "alias rsh_m7_say='echo hello'\nrsh_m7_say world\n";
     let o = run(&d, env!("CARGO_BIN_EXE_rsh"), source);
+    assert_eq!(o.stdout, b"hello world\n");
+    assert!(o.status.success());
+    let disabled = format!("set +o expand_aliases\n{source}");
+    let o = run(&d, env!("CARGO_BIN_EXE_rsh"), &disabled);
     assert_eq!(o.status.code(), Some(127));
     let source = "set -o expand_aliases\nalias rsh_m7_say='echo hello'\nrsh_m7_say world\nalias one='echo ' word=expanded\none word\nalias rsh_m7_self='rsh_m7_self'\nrsh_m7_self\n";
     let o = run(&d, env!("CARGO_BIN_EXE_rsh"), source);

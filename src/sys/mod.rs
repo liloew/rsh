@@ -41,6 +41,7 @@ enum Action {
         missing: Vec<u8>,
         denied: Vec<u8>,
         failed: Vec<u8>,
+        fallback: Option<(CString, Vec<Vec<*const c_char>>)>,
     },
     Finish {
         status: u8,
@@ -92,6 +93,23 @@ impl PreparedProcess {
             .iter()
             .map(|s| CString::new(s.as_slice()))
             .collect::<Result<Vec<_>, _>>()?;
+        // Prebuild the ENOEXEC interpreter argv before fork. Re-enter rsh itself;
+        // the implementation never delegates shell interpretation to another sh.
+        let fallback = std::env::current_exe()
+            .ok()
+            .and_then(|exe| CString::new(exe.as_os_str().as_bytes()).ok())
+            .map(|exe| {
+                let arguments = paths
+                    .iter()
+                    .map(|path| {
+                        let mut args = vec![exe.as_ptr(), c"--".as_ptr(), path.as_ptr()];
+                        args.extend(strings.iter().skip(1).map(|arg| arg.as_ptr()));
+                        args.push(std::ptr::null());
+                        args
+                    })
+                    .collect();
+                (exe, arguments)
+            });
         let variables = environment
             .iter()
             .map(|(key, value)| {
@@ -119,6 +137,7 @@ impl PreparedProcess {
             redirection_status: 1,
             action: Action::Exec {
                 paths,
+                fallback,
                 _argv: strings,
                 _env: variables,
                 argv,
@@ -449,11 +468,21 @@ fn child_run(
                 missing,
                 denied,
                 failed,
+                fallback,
                 ..
             } => {
                 let mut permission = false;
-                for path in paths {
+                for (index, path) in paths.iter().enumerate() {
                     libc::execve(path.as_ptr(), argv.as_ptr(), env.as_ptr());
+                    if Errno::last_raw() == libc::ENOEXEC {
+                        if let Some((exe, arguments)) = fallback
+                            && let Some(args) = arguments.get(index)
+                        {
+                            libc::execve(exe.as_ptr(), args.as_ptr(), env.as_ptr());
+                        }
+                        write_child(2, failed);
+                        libc::_exit(126);
+                    }
                     match Errno::last_raw() {
                         libc::ENOENT | libc::ENOTDIR => {}
                         libc::EACCES => permission = true,

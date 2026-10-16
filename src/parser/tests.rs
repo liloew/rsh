@@ -398,6 +398,7 @@ fn heredoc_ast_roundtrips_nested_groups_pipelines_and_substitutions() {
 #[test]
 fn functions_require_names_compound_bodies_and_complete_headers() {
     for source in [
+        "{ (true) }",
         "f() { :; }",
         "f ()\nif true; then :; fi >out",
         "f() ( : )",
@@ -422,7 +423,6 @@ fn functions_require_names_compound_bodies_and_complete_headers() {
         "exit() { :; }",
         "return() { :; }",
         "f(x) { :; }",
-        "{ (true) }",
     ] {
         assert!(
             matches!(parse(source.as_bytes()), Err(ParseError::Syntax { .. })),

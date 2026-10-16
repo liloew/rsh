@@ -234,9 +234,6 @@ impl Parser<'_> {
                 self.linebreak();
             }
             if self.peek().is_none() || self.stopped(stops, close) {
-                if self.keyword(b"}") && !separated {
-                    return Err(self.error("separator before }"));
-                }
                 break;
             }
             if !separated {

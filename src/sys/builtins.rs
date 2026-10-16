@@ -195,6 +195,7 @@ pub fn replace_process(process: &PreparedProcess) -> u8 {
         missing,
         denied,
         failed,
+        fallback,
         ..
     } = &process.action
     else {
@@ -218,8 +219,17 @@ pub fn replace_process(process: &PreparedProcess) -> u8 {
             }
         }
         let mut permission = false;
-        for path in paths {
+        for (index, path) in paths.iter().enumerate() {
             libc::execve(path.as_ptr(), argv.as_ptr(), env.as_ptr());
+            if Errno::last_raw() == libc::ENOEXEC {
+                if let Some((exe, arguments)) = fallback
+                    && let Some(args) = arguments.get(index)
+                {
+                    libc::execve(exe.as_ptr(), args.as_ptr(), env.as_ptr());
+                }
+                super::write_child(2, failed);
+                return 126;
+            }
             match Errno::last_raw() {
                 libc::ENOENT | libc::ENOTDIR => {}
                 libc::EACCES => permission = true,

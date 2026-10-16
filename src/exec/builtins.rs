@@ -152,6 +152,9 @@ impl Shell {
             } else if source.is_empty() {
                 break;
             }
+            if next.is_some() && continued_line(&source) {
+                continue;
+            }
             let parsed = crate::parser::parse_at(
                 &source,
                 if self.env.options.expand_aliases || self.env.options.interactive {
@@ -208,6 +211,9 @@ impl Shell {
                 continue;
             }
             let chunk = source.get(start..end).unwrap_or_default();
+            if end < source.len() && continued_line(chunk) {
+                continue;
+            }
             let parsed = crate::parser::parse_at(
                 chunk,
                 if self.env.options.expand_aliases || self.env.options.interactive {
@@ -527,4 +533,16 @@ impl Shell {
         }
         status
     }
+}
+
+// A physical newline removed by the lexer does not end an input unit. Checking
+// its token span distinguishes a continuation from a comment or escaped slash.
+fn continued_line(source: &[u8]) -> bool {
+    source.ends_with(b"\\\n")
+        && crate::lexer::lex(source).is_ok_and(|tokens| {
+            tokens.last().is_some_and(|token| {
+                token.span.end.offset == source.len()
+                    && matches!(token.kind, crate::lexer::TokenKind::Word(_))
+            })
+        })
 }
