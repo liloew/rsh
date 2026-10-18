@@ -1,13 +1,16 @@
+mod support;
 use std::ffi::OsString;
 use std::os::unix::ffi::OsStringExt;
-use std::process::{Command, Output};
+use std::process::Output;
+use support::TempDir;
 
 fn run(args: &[&str]) -> Output {
-    Command::new(env!("CARGO_BIN_EXE_rsh"))
+    // Startup also applies to -c; never fall back to the host user's config.
+    let fixture = TempDir::new();
+    fixture.fixtures();
+    fixture
+        .command(env!("CARGO_BIN_EXE_rsh"))
         .args(args)
-        .env_clear()
-        .env("PATH", "/usr/bin:/bin")
-        .env("LC_ALL", "C")
         .output()
         .unwrap()
 }
@@ -61,11 +64,12 @@ fn spawn_failure_is_reported() {
 fn preserves_non_utf8_arguments() {
     let mut source = b"/usr/bin/printf %s ".to_vec();
     source.push(0xff);
-    let output = Command::new(env!("CARGO_BIN_EXE_rsh"))
+    let fixture = TempDir::new();
+    fixture.fixtures();
+    let output = fixture
+        .command(env!("CARGO_BIN_EXE_rsh"))
         .arg("-c")
         .arg(OsString::from_vec(source))
-        .env_clear()
-        .env("LC_ALL", "C")
         .output()
         .unwrap();
     assert!(output.status.success());
@@ -77,4 +81,15 @@ fn command_mode_positional_arguments() {
     let out = run(&["-c", "printf '%s\\n' \"$0\" \"$1\" \"$#\"", "name", "value"]);
     assert!(out.status.success());
     assert_eq!(out.stdout, b"name\nvalue\n1\n");
+}
+
+#[test]
+fn cli_fixture_isolates_home_and_working_directory() {
+    let output = run(&[
+        "-c",
+        "test -d \"$HOME\" && test \"$HOME\" = \"$PWD/home\"; printf '%s' $?",
+    ]);
+    assert!(output.status.success());
+    assert_eq!(output.stdout, b"0");
+    assert!(output.stderr.is_empty());
 }

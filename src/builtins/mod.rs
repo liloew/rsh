@@ -1,4 +1,4 @@
-//! POSIX builtin dispatch; execution-context operations live in exec.
+//! Special/regular builtin dispatch; execution-context operations live in exec.
 pub mod misc;
 mod motd;
 mod printf;
@@ -75,7 +75,7 @@ pub fn special(name: &[u8]) -> Option<Builtin> {
         _ => None,
     }
 }
-/// Every POSIX special name is protected, including M7 utilities not implemented yet.
+/// Every POSIX special name is protected from shell-function replacement.
 pub fn is_special_name(name: &[u8]) -> bool {
     matches!(
         name,

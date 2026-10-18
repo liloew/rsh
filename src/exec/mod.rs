@@ -44,6 +44,8 @@ impl Flow {
 }
 pub const MAX_FUNCTION_DEPTH: usize = 32;
 
+/// Serial interpreter state, including ownership of child statuses and terminal state.
+/// Multiple values are not independent OS environments: fds and signals are global.
 pub struct Shell {
     pub env: ShellEnv,
     executable: PathBuf,
@@ -112,6 +114,8 @@ impl Shell {
         let flow = self.eval_script(script);
         self.finish(flow)
     }
+    // failglob aborts the current parsed input unit, not all subsequent input.
+    // Nested sourced files must unwind first so positional parameters/fds restore.
     fn recover_line_abort(&mut self, flow: Flow) -> Flow {
         if self.abort_line && self.env.source_depth == 0 {
             self.abort_line = false;
@@ -916,6 +920,8 @@ impl Shell {
         }
         Ok(r)
     }
+    // File-backed capture lets the worker finish before reading without the
+    // pipe-capacity deadlock a wait-before-drain implementation would create.
     fn substitute(&mut self, source: &[u8]) -> Result<(Vec<u8>, u8), ExecError> {
         use std::io::{Read, Seek};
         let script = crate::parser::parse(source)

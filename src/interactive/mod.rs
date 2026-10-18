@@ -171,6 +171,8 @@ fn edit_mode(vi: bool) -> Box<dyn reedline::EditMode> {
         )))
     }
 }
+/// Load user configuration for every top-level mode, including scripts and -c.
+/// The name of this module does not limit startup to interactive sessions.
 pub fn startup(s: &mut Shell) {
     let config = s
         .env

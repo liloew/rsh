@@ -11,7 +11,7 @@
 - Behavior verified by differential testing against `dash` and `bash --posix`.
 
 **Non-goals (initially)**
-- Full bash compatibility (arrays, `[[ ]]`, process substitution, `select`, coprocesses). These are optional extensions (Milestone 9).
+- Full bash compatibility (arrays, `[[ ]]`, process substitution, `select`, coprocesses). These are optional extensions (Milestone 11); the requested [[ ]] subset is documented in section 6.2.
 - fish *syntax* (`set`, `end`, `function ... end`). We copy fish's UX, not its language.
 - Windows support. Target Linux and macOS.
 
@@ -240,7 +240,7 @@ grammar/wrapping policy; shell patterns remain byte-based in the C locale.
 `: . break continue eval exec exit export readonly return set shift times trap unset`
 
 **Regular builtins:**
-`cd pwd echo printf test [ read source shopt type command alias unalias getopts umask wait kill jobs fg bg true false ulimit(later) hash(later)`
+`cd pwd echo printf test [ read source shopt type command alias unalias getopts umask wait kill jobs fg bg disown history motd true false hash`
 
 Specifics:
 - `cd`: handle `-`, `CDPATH`, `-L/-P`; update `PWD` and `OLDPWD`.
@@ -251,7 +251,7 @@ Specifics:
 - M7 implements the special/regular builtin set above except `jobs`, `fg`, `bg` (M8) and optional `ulimit`. `hash` is an explicitly documented no-op, including `hash -r`.
 - `.` resolves filenames relative to cwd (a requested deviation from POSIX PATH lookup); supplied arguments temporarily replace positional parameters, while an invocation without arguments shares them. Sourced files may return. `eval` parses in the current environment; `exec command` replaces the process without forking, and operand-less `exec` retains redirections.
 - `export`/`readonly -p`, `unset -v/-f`, variable listings and trap listings use shell quoting. Readonly writes fail; direct special-builtin usage/assignment errors abort non-interactive execution. `command` bypasses functions and `-p` changes lookup without changing the child's PATH.
-- `set` supports `-e -u -x -f -n -C`, named options and `pipefail`, positional parameters, and option listings. Startup accepts these options plus `-c`, `-s`, `--`, `-i`, `-l`; interactive UI/job control and login startup files remain M8/M9. Aliases expand at eligible command positions via the lexer/parser hook; M10 enables `expand_aliases` by default for POSIX script behavior.
+- `set` supports `-e -u -x -f -n -C`, named options and `pipefail`, positional parameters, and option listings. Startup accepts these options plus `-c`, `-s`, `--`, `-i`, `-l`; see sections 8 and 9 for interactive/job-control behavior and the user-selected startup policy. Aliases expand at eligible command positions via the lexer/parser hook; M10 enables `expand_aliases` by default for POSIX script behavior.
 - Signal handlers only record pending signals; actions execute between commands in shell context. EXIT actions preserve the prior status unless explicitly overridden. Caught actions reset in subshells/command substitutions; ignored signals remain ignored. A substitution consisting solely of `trap` can inspect the parent's trap list without executing its EXIT action.
 - Shell defaults initialize IFS, PATH, prompts, OPTIND/OPTERR, LINENO and PPID when absent, and HOME from passwd when needed. PWD/OLDPWD track directory changes; OPTARG remains unset when no option argument exists.
 
@@ -297,7 +297,7 @@ no-ops. Arbitrary .bashrc files are therefore not guaranteed compatible.
 
 ## 9. Interactive layer (fish-style UX)
 
-Built on `reedline` (preferred) or `rustyline`.
+Built on `reedline`.
 - Prompt: configurable via `PS1`/`PS2` (POSIX) with a sensible default (cwd, git branch optional, status color on non-zero `$?`).
 - Syntax highlighting using the real lexer: valid command in one color, unknown command in red, strings, variables, operators.
 - Autosuggestions from history (accept with Right arrow or End).

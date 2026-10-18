@@ -1,5 +1,6 @@
 //! Shell options shared by startup parsing and the set builtin.
 use super::ShellEnv;
+/// Shell-local settings; named options are also carried into re-exec workers.
 #[derive(Debug, Clone)]
 pub struct Options {
     pub here_strings: bool,
@@ -24,12 +25,15 @@ pub struct Options {
 impl Default for Options {
     fn default() -> Self {
         Self {
+            // Explicit compatibility extensions default on; their gates affect
+            // execution, not lexer/parser recognition or strict POSIX parsing.
             here_strings: true,
             double_brackets: true,
             dotglob: false,
             nullglob: false,
             failglob: false,
             nocasematch: false,
+            // Bare source/dot operands use cwd unless the user opts into PATH lookup.
             sourcepath: false,
             vi: false,
             git_prompt: false,
@@ -45,6 +49,7 @@ impl Default for Options {
         }
     }
 }
+/// Keep this registry in sync with option/set_option: worker snapshots iterate it.
 pub const NAMES: &[&str] = &[
     "here_strings",
     "double_brackets",

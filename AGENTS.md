@@ -11,7 +11,7 @@ Instructions for Codex (and any coding agent) working in this repository.
 ```sh
 cargo build
 cargo test                        # all tests
-cargo test --test diff            # differential tests vs dash / bash --posix
+cargo test --test exec_diff       # external-command differential tests; cargo test covers the other suites
 cargo clippy --all-targets -- -D warnings
 cargo fmt --all -- --check
 UPDATE_GOLDEN=1 cargo test        # regenerate golden files (review the diff!)

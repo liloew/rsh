@@ -1,11 +1,12 @@
+//! Byte-preserving shell state, without mutating global environment or cwd.
 pub mod options;
-// Byte-preserving shell state, without global variable/cwd mutation.
 use std::collections::BTreeMap;
 use std::os::unix::ffi::OsStrExt;
 use std::path::PathBuf;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Variable {
+    /// None means unset (attributes may still exist); Some(empty) means set but null.
     pub value: Option<Vec<u8>>,
     pub exported: bool,
     pub readonly: bool,

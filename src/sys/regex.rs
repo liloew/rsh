@@ -2,6 +2,8 @@
 use nix::libc;
 use std::{ffi::CString, mem::MaybeUninit};
 
+/// Match POSIX ERE syntax without exposing libc's allocation/lifetime contract.
+/// Quote escaping belongs to expand; capture arrays are intentionally not exported.
 pub fn regex_matches(pattern: &[u8], value: &[u8], ignore_case: bool) -> Result<bool, String> {
     let pattern = CString::new(pattern).map_err(|_| "NUL in regular expression".to_owned())?;
     let value = CString::new(value).map_err(|_| "NUL in regular expression operand".to_owned())?;

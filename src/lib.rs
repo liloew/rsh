@@ -1,4 +1,19 @@
-//! POSIX shell components. The M0 CLI is intentionally separate from the M1 lexer.
+//! A byte-oriented Unix shell interpreter and interactive layer.
+//!
+//! [`lexer`] and [`parser`] retain structured words; [`exec`] invokes [`expand`]
+//! only at execution time. Raw operating-system calls and unsafe code live in
+//! [`sys`]. The Rust API is experimental; SPEC.md defines shell-level behavior.
+//!
+//! Parsing does not execute commands or load user startup files:
+//!
+//! ```
+//! # fn main() -> Result<(), rsh::parser::ParseError> {
+//! let tree = rsh::parser::parse(b"printf '%s\\n' hello")?;
+//! let source = tree.to_source_bytes();
+//! assert_eq!(rsh::parser::parse(&source)?, tree);
+//! # Ok(())
+//! # }
+//! ```
 pub mod ast;
 pub mod builtins;
 pub mod env;

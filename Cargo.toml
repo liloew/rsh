@@ -3,6 +3,11 @@ name = "rsh"
 version = "0.1.0"
 edition = "2024"
 default-run = "rsh"
+description = "A Unix shell written in Rust with POSIX-oriented scripting and an interactive line editor"
+license = "Apache-2.0"
+readme = "README.md"
+keywords = ["shell", "posix", "terminal", "repl"]
+categories = ["command-line-utilities"]
 
 [dependencies]
 thiserror = "2"

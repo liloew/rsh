@@ -1,16 +1,16 @@
+mod support;
 use std::process::{Command, Output};
+use support::TempDir;
 
 fn run(shell: &str, posix: bool, source: &str) -> std::io::Result<Output> {
-    let mut command = Command::new(shell);
+    // Even the legacy smoke cases must not source a developer's startup files.
+    let fixture = TempDir::new();
+    fixture.fixtures();
+    let mut command = fixture.command(shell);
     if posix {
         command.arg("--posix");
     }
-    command
-        .args(["-c", source])
-        .env_clear()
-        .env("PATH", "/usr/bin:/bin")
-        .env("LC_ALL", "C")
-        .output()
+    command.args(["-c", source]).output()
 }
 
 #[test]

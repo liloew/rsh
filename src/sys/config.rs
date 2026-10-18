@@ -4,6 +4,9 @@ use std::{
     os::unix::ffi::OsStrExt,
     path::{Path, PathBuf},
 };
+/// Collect startup candidates before execution, preserving non-UTF-8 path ordering.
+/// Directory symlinks are deliberately not traversed; regular-file links are valid.
+/// A missing root is silent; other discovery errors are returned beside candidates.
 pub fn rsh_config_files(root: &Path) -> (Vec<PathBuf>, Vec<(PathBuf, io::Error)>) {
     let mut pending = vec![root.to_path_buf()];
     let mut files = Vec::new();
