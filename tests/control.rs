@@ -215,7 +215,26 @@ fn reference_policy_differences() {
             );
         }
         if available("bash") {
-            assert_eq!(run(&d, "bash", source).status.code(), Some(1));
+            let out = run(&d, "bash", source);
+            // Bash 3.2 returns 1 for a top-level return; Bash 5.3 returns 2.
+            // Both diagnose return, while shift overflow still returns 1
+            // (older Bash can omit the shift diagnostic).
+            let allowed: &[i32] = if source.starts_with("return") {
+                &[1, 2]
+            } else {
+                &[1]
+            };
+            assert!(
+                out.status
+                    .code()
+                    .is_some_and(|code| allowed.contains(&code)),
+                "bash --posix {source:?}: status {:?}, stderr {:?}",
+                out.status,
+                String::from_utf8_lossy(&out.stderr)
+            );
+            if source.starts_with("return") {
+                assert!(!out.stderr.is_empty(), "bash --posix {source:?}");
+            }
         }
     }
     let prefix = "A=outer; f(){ printf 'inside:%s\\n' \"$A\"; A=changed; }; A=temp f; printf 'after:%s\\n' \"$A\"";

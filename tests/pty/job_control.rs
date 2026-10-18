@@ -338,6 +338,9 @@ fn disown_exempts_hangup_and_hangup_continues_stopped_jobs() {
         helper.display()
     ));
     let group = sh.foreground();
+    // Do not let the helper stop and return the terminal before foreground()
+    // has observed the handoff, even if the test process is descheduled.
+    std::fs::write(sh._dir.0.join("stop-ready"), b"stop\n").unwrap();
     sh.expect("Stopped");
     sh.prompt();
     sh.line("exit");
@@ -359,6 +362,14 @@ fn disown_exempts_hangup_and_hangup_continues_stopped_jobs() {
 fn hangup_probe() {
     let _pty = crate::PTY_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     rsh::sys::trap_signal(rsh::sys::HUP, Some(b"record")).unwrap();
+    let start = Instant::now();
+    while !std::path::Path::new("stop-ready").exists() {
+        assert!(
+            start.elapsed() < Duration::from_secs(8),
+            "parent did not acknowledge foreground handoff"
+        );
+        std::thread::sleep(Duration::from_millis(2));
+    }
     rsh::sys::send_signal(
         std::process::id() as i32,
         rsh::sys::signal_number(b"STOP").unwrap(),
