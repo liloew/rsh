@@ -12,17 +12,6 @@ multiline conditions, functions, here-strings and exit-status feedback.
 
 ![rsh interactive demo: completion, history suggestions and shell scripting](docs/demo/rsh.gif)
 
-[Original asciicast recording](docs/demo/rsh.cast) · [Replay and re-recording guide](docs/demo/README.md)
-
-To replay the recording in your terminal after cloning the repository:
-
-```sh
-asciinema play docs/demo/rsh.cast
-```
-
-The GIF plays directly in GitHub's README; the original recording preserves terminal
-text and timing. Recording tools are optional and are not rsh runtime dependencies.
-
 ## Build and run
 
 Supported targets are Linux and macOS. Build on the target operating system and
