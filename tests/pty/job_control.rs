@@ -152,6 +152,31 @@ fn stop_bg_fg_interrupt_and_terminal_restore() {
     }
 }
 #[test]
+fn plain_prompt_ignores_empty_chld_but_reports_completion() {
+    let _pty = crate::PTY_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let mut sh = Shell::new();
+    rsh::sys::send_signal(
+        sh.session.get_process().pid().as_raw(),
+        rsh::sys::signal_number(b"CHLD").unwrap(),
+    )
+    .unwrap();
+    sh.session
+        .set_expect_timeout(Some(Duration::from_millis(300)));
+    assert!(matches!(
+        sh.session.expect("rsh-test> "),
+        Err(expectrl::Error::ExpectTimeout)
+    ));
+    sh.session.set_expect_timeout(Some(Duration::from_secs(8)));
+    sh.line("sleep 0.3 &");
+    sh.session.expect(Regex(r"\[1\] [0-9]+")).unwrap();
+    sh.prompt();
+    sh.expect("Done");
+    sh.prompt();
+    sh.line("exit");
+    sh.session.expect(Eof).unwrap();
+}
+
+#[test]
 fn background_markers_specs_wait_and_disown() {
     let _pty = crate::PTY_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let mut sh = Shell::new();
@@ -162,8 +187,10 @@ fn background_markers_specs_wait_and_disown() {
     sh.session.expect(Regex(r"\[2\] [0-9]+")).unwrap();
     sh.prompt();
     sh.line("jobs");
-    sh.session.expect(Regex(r"\[1\]-.*Running")).unwrap();
-    sh.session.expect(Regex(r"\[2\]\+.*Running")).unwrap();
+    // expectrl can read both rows at once; never let the first match consume
+    // the second row's Running marker (notably with macOS PTY buffering).
+    sh.session.expect(Regex(r"\[1\]-[^\r\n]*Running")).unwrap();
+    sh.session.expect(Regex(r"\[2\]\+[^\r\n]*Running")).unwrap();
     sh.prompt();
     sh.line("kill %sleep");
     sh.expect("no such job");

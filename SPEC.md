@@ -794,3 +794,18 @@ M10 progress (not yet complete):
   sourcepath opt-in, bounds, arbitrary bytes and AST roundtrips. Lexer and parser
   stable fuzz smoke each completed 20,000 runs without crash/hang/panic; these
   were not sanitizer/coverage-instrumented campaigns.
+
+- CI portability/stability regression (M10; sections 4.1, 8 and 9): Bash 3.2
+  rejects `! ! a`, while Bash 5.3 accepts it even with --posix. The syntax
+  differential permits those two reference statuses (2/0), while still requiring
+  rsh to reject repeated negation per section 4.1. No grammar change is made.
+  Plain-terminal CHLD wakeups now redraw PS1 only when there is a job notice;
+  an empty wakeup must not leave a duplicate prompt for the next command.
+  A PTY regression checks both empty CHLD and idle background completion.
+  Job-list PTY patterns stop at line boundaries so a buffered pair of Running
+  rows cannot be consumed by the first expectation. No golden file changed.
+  Validation on macOS: cargo fmt --all / --check, cargo clippy --locked
+  --all-targets -- -D warnings, and full cargo test --locked pass. The syntax
+  differential passes with both Apple Bash 3.2 and Homebrew Bash 5.3. The nine
+  job-control PTY scenarios pass 20 consecutive runs (180 scenario executions).
+  Linux runtime verification remains CI's responsibility; M10 stays incomplete.

@@ -102,6 +102,18 @@ fn parser_syntax_matches_reference_shells() {
                 .env("LC_ALL", "C")
                 .output()
                 .unwrap();
+            // Bash 3.2 rejects repeated pipeline negation, while Bash 5.3
+            // accepts it even in POSIX mode. Both are reference alternatives;
+            // the rsh assertion above still requires SPEC 4.1's single '!'.
+            if shell == "bash" && text == "! ! a" {
+                assert!(
+                    matches!(expected.status.code(), Some(0 | 2)),
+                    "bash: {text}: {:?}",
+                    expected
+                );
+                assert!(expected.stdout.is_empty());
+                continue;
+            }
             // Explicitly documented reference-shell disagreements; rsh follows grammar.
             let reference_accepts = match (shell, text) {
                 ("bash", "for 1; do :; done" | "for 'i'; do :; done") => true,

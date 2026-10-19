@@ -521,7 +521,9 @@ fn read_plain(
                     let _ = sys::write_fd(2, b"\n");
                     return Ok(reedline::Signal::CtrlC);
                 }
-                if let Some(notices) = shell(Shell::interactive_notifications) {
+                if let Some(notices) = shell(Shell::interactive_notifications)
+                    && !notices.is_empty()
+                {
                     let _ = sys::write_fd(2, &notices);
                     let _ = sys::write_fd(2, prompt.left.as_bytes());
                 }
